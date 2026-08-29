@@ -63,7 +63,7 @@ def ext_idx(text):
 
 def ext_brd(text):
     r = {"up":None,"down":None,"lu":None,"ld":None,"to":None}
-    for line in text.splitlines()[:80]:
+    for line in text.splitlines()[:300]:
         for k, p in [("up",r"上涨家数[：:]\s*([\d,]+)"),("down",r"下跌家数[：:]\s*([\d,]+)"),("lu",r"涨停家数[：:]\s*([\d,]+)"),("ld",r"跌停家数[：:]\s*([\d,]+)")]:
             m = re.search(p, line)
             if m: r[k] = int(m.group(1).replace(",",""))
@@ -86,10 +86,10 @@ def ext_sec(text):
 def ext_mgn(text):
     r = {"bal":None,"fin":None,"sec":None,"net":None,"chg":None}
     for line in text.splitlines()[:200]:
-        for k, p in [("bal",r"两融余额[：:]\s*([\d.,]+)\s*(万亿|亿)"),("fin",r"融资余额[：:]\s*([\d.,]+)\s*(万亿|亿)"),("sec",r"融券余额[：:]\s*([\d.,]+)\s*(万亿|亿)")]:
+        for k, p in [("bal",r"两融余额[：:]?\s*([\d.,]+)\s*(万亿|亿)"),("fin",r"融资余额[：:]?\s*([\d.,]+)\s*(万亿|亿)"),("sec",r"融券余额[：:]?\s*([\d.,]+)\s*(万亿|亿)")]:
             m = re.search(p, line)
             if m and r[k] is None: r[k] = float(m.group(1).replace(",","")) * (1e12 if m.group(2)=="万亿" else 1e8)
-        m = re.search(r"融资净买入[：:]\s*([+\-]?[\d.,]+)\s*(万亿|亿)", line)
+        m = re.search(r"融资净买入[：:]?\s*([+\-]?[\d.,]+)\s*(万亿|亿)", line)
         if m and r["net"] is None: r["net"] = (-1 if m.group(1).startswith("-") else 1) * float(m.group(1).lstrip("+-").replace(",","")) * (1e12 if m.group(2)=="万亿" else 1e8)
         m = re.search(r"环比.*?([+\-]?\d+\.?\d*)%", line)
         if m and r["chg"] is None:
@@ -467,6 +467,8 @@ def build_stock_dash(text):
     if rc: parts.append(rc)
     sm = _stock_metrics(d)
     if sm: parts.append(sm)
+    ff = _fundflow_card(text)
+    if ff: parts.append(ff)
     fb = _fin_bars(d)
     if fb: parts.append(fb)
     pz = _price_zone(d)
@@ -474,6 +476,31 @@ def build_stock_dash(text):
     ts = _tech_strip(d)
     if ts: parts.append(ts)
     return '<div class="dashboard">' + "".join(parts) + "</div>" if parts else ""
+
+
+def _fundflow_card(text):
+    """个股资金流向指示器"""
+    main = None; direction = ""
+    for line in text.splitlines()[:200]:
+        m = re.search(r"主力.*?净流入\s*([\d.,]+)\s*万", line)
+        if m:
+            try:
+                main = float(m.group(1).replace(",", ""))
+                direction = "net_in" if "流出" not in line else "net_out"
+            except: pass
+        m = re.search(r"主力.*?净流出\s*([\d.,]+)\s*万", line)
+        if m and main is None:
+            try:
+                main = -float(m.group(1).replace(",", ""))
+                direction = "net_out"
+            except: pass
+    if main is None: return ""
+    col = "#ef4444" if main >= 0 else "#22c55e"
+    lbl = "净流入" if main >= 0 else "净流出"
+    txt = f"{abs(main)/10000:.0f}万" if abs(main) >= 10000 else f"{abs(main):.0f}万"
+    return f'''<div class="ff-wrap reveal on"><div class="ff-title">主力资金</div>
+<div class="ff-bar"><div class="ff-fill" style="background:{col}"></div></div>
+<div class="ff-val" style="color:{col}">{lbl} {txt}</div></div>'''
 
 
 # ================ 增强可视化 ================
@@ -578,7 +605,7 @@ def ext_margin_trend(text):
     """提取两融历史数据点用于折线图"""
     points = []
     for line in text.splitlines():
-        m = re.search(r"(\d{2}-\d{2})[（(]?\S*[）)]?\s*\|?\s*([\d.]+)\s*亿\s*\|?\s*([\d.]+)\s*万亿", line)
+        m = re.search(r"(\d{2}-\d{2})\s*[|│]?\s*([\d.]+)亿\s*[|│]?\s*([\d.]+)万亿", line)
         if m:
             try:
                 points.append({"date": m.group(1), "sec": float(m.group(2)), "fin": float(m.group(3))})
@@ -692,16 +719,19 @@ def build_daily_dash(text):
     mline_pts = ext_margin_trend(text)
     parts = []
     if idx: parts.append(_index_cards(idx))
+    mgn_cards = _mgn_cards(mgn)
     sg = _sentiment_gauge(brd["up"], brd["down"])
+    if mgn_cards or sg:
+        row = ""
+        if sg: row += f'<div class="dash-cell">{sg}</div>'
+        if mgn_cards: row += mgn_cards
+        if row: parts.append(f'<div class="dash-row">{row}</div>')
     dn = _donut(brd["up"], brd["down"], brd["lu"], brd["ld"])
-    if sg or dn:
-        cells = ""
-        if dn: cells += f'<div class="dash-cell">{dn}</div>'
-        if sg: cells += f'<div class="dash-cell">{sg}</div>'
-        if cells: parts.append(f'<div class="dash-row">{cells}</div>')
-    if sec: parts.append(_heatmap(sec))
+    if dn:
+        parts.append(f'<div class="dash-row"><div class="dash-cell">{dn}</div></div>')
     ml = _margin_line_chart(mline_pts)
     if ml: parts.append(ml)
+    if sec: parts.append(_heatmap(sec))
     if mgn["bal"] or mgn["net"]: parts.append(_mgn_cards(mgn))
     mc = _macro_chips(macro)
     ob = _overseas_bars(ovs)
@@ -918,6 +948,12 @@ hr{border:none;height:1px;background:linear-gradient(90deg,transparent,var(--lin
 .ts-k{font-size:11px;color:var(--muted)}
 .ts-v{font-size:14px;font-weight:700;font-family:monospace}
 @media(max-width:768px){.dash-two{grid-template-columns:1fr}}
+
++.ff-wrap{margin:14px 0;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 20px;backdrop-filter:blur(12px)}
++.ff-title{font-size:11px;color:var(--muted);letter-spacing:2px;margin-bottom:10px;text-transform:uppercase}
++.ff-bar{height:10px;background:rgba(255,255,255,.04);border-radius:5px;overflow:hidden;margin:8px 0}
++.ff-fill{height:100%;border-radius:5px;width:65%;transition:width 1s cubic-bezier(.22,1,.36,1)}
++.ff-val{font-size:20px;font-weight:700;font-family:monospace;text-align:center}
 """
 
 
