@@ -311,14 +311,171 @@ def _mgn_cards(m):
 
 def build_dashboard(text):
     """生成仪表盘 HTML 块（如果数据可用）"""
+    if "客观评级" in text[:500] or "核心判断" in text[:800]:
+        return build_stock_dash(text)
+    return build_daily_dash(text)
+
+
+def ext_stock(text):
+    r = {"rating":"","target":"","price":None,"pe":None,"pb":None,"mcap":None,
+         "div":None,"rev":None,"rev_chg":None,"profit_chg":None,"margin":None,
+         "roe":None,"debt":None,"chip_pct":None,"chip_avg":None,
+         "c90lo":None,"c90hi":None,"c70lo":None,"c70hi":None,
+         "ma20":None,"ma60":None,"rsi":None}
+    for line in text.splitlines()[:300]:
+        m = re.search(r"客观评级[：:]\s*(.+?)[（(]", line)
+        if m and not r["rating"]: r["rating"] = m.group(1).strip()
+        m = re.search(r"目标区间\s*([\d.]+)[-~至]\s*([\d.]+)", line)
+        if m and not r["target"]: r["target"] = m.group(1) + "-" + m.group(2)
+        m = re.search(r"收盘\s*([\d.]+)\s*元", line)
+        if m and r["price"] is None: r["price"] = float(m.group(1))
+        m = re.search(r"PE\s*TTM\s*([\d.]+)", line)
+        if m and r["pe"] is None: r["pe"] = float(m.group(1))
+        m = re.search(r"PB\s*([\d.]+)\s*倍", line)
+        if m and r["pb"] is None: r["pb"] = float(m.group(1))
+        m = re.search(r"总市值.*?([\d.]+)\s*亿", line)
+        if m and r["mcap"] is None: r["mcap"] = float(m.group(1))
+        m = re.search(r"股息率.*?([\d.]+)%", line)
+        if m and r["div"] is None: r["div"] = float(m.group(1))
+        m = re.search(r"营收\s*([\d.]+)\s*亿", line)
+        if m and r["rev"] is None: r["rev"] = float(m.group(1))
+        m = re.search(r"毛利率\s*([\d.]+)%", line)
+        if m and r["margin"] is None: r["margin"] = float(m.group(1))
+        m = re.search(r"ROE\s*[（(]?([+\-]?[\d.]+)%", line)
+        if m and r["roe"] is None: r["roe"] = float(m.group(1))
+        m = re.search(r"负债率\s*([\d.]+)%", line)
+        if m and r["debt"] is None: r["debt"] = float(m.group(1))
+        m = re.search(r"获利盘\s*([\d.]+)%", line)
+        if m and r["chip_pct"] is None: r["chip_pct"] = float(m.group(1))
+        m = re.search(r"平均成本\s*([\d.]+)", line)
+        if m and r["chip_avg"] is None: r["chip_avg"] = float(m.group(1))
+        m = re.search(r"90%\s*成本区间\s*([\d.]+)\s*至\s*([\d.]+)", line)
+        if m: r["c90lo"] = float(m.group(1)); r["c90hi"] = float(m.group(2))
+        m = re.search(r"70%\s*成本区间\s*([\d.]+)\s*至\s*([\d.]+)", line)
+        if m: r["c70lo"] = float(m.group(1)); r["c70hi"] = float(m.group(2))
+        m = re.search(r"MA20\s*([\d.]+)", line)
+        if m and r["ma20"] is None: r["ma20"] = float(m.group(1))
+        m = re.search(r"MA60\s*([\d.]+)", line)
+        if m and r["ma60"] is None: r["ma60"] = float(m.group(1))
+        m = re.search(r"RSI\s*([\d.]+)", line)
+        if m and r["rsi"] is None: r["rsi"] = float(m.group(1))
+        m = re.search(r"归母.*?([+\-]?\d+\.?\d*)%", line)
+        if m and r["profit_chg"] is None:
+            try: r["profit_chg"] = float(m.group(1))
+            except: pass
+    return r
+
+
+def _rating_card(d):
+    if not d["rating"]: return ""
+    tgt = f'<span class="rt-tgt">目标区间 {esc(d["target"])}</span>' if d["target"] else ""
+    is_buy = "买入" in d["rating"] or "增持" in d["rating"] or "推荐" in d["rating"]
+    cls = "rt-buy" if is_buy else "rt-sell"
+    return f'''<div class="rating-banner {cls} reveal on">
+<div class="rt-label">客观评级</div>
+<div class="rt-val">{esc(d["rating"])}</div>
+{tgt}
+</div>'''
+
+
+def _stock_metrics(d):
+    items = []
+    if d["price"] is not None: items.append(("最新价", f'{d["price"]:.2f} 元', ""))
+    if d["mcap"] is not None: items.append(("总市值", f'{d["mcap"]:.1f} 亿', ""))
+    if d["pe"] is not None: items.append(("PE TTM", f'{d["pe"]:.1f}', ""))
+    if d["pb"] is not None: items.append(("PB", f'{d["pb"]:.2f}', ""))
+    if d["div"] is not None: items.append(("股息率", f'{d["div"]:.2f}%', ""))
+    if d["rev"] is not None: items.append(("最新营收", f'{d["rev"]:.1f} 亿', ""))
+    if d["rev_chg"] is not None: items.append(("营收同比", f'{d["rev_chg"]:+.2f}%', _vcls(d["rev_chg"])))
+    if d["profit_chg"] is not None: items.append(("归母同比", f'{d["profit_chg"]:+.2f}%', _vcls(d["profit_chg"])))
+    if d["margin"] is not None: items.append(("毛利率", f'{d["margin"]:.1f}%', ""))
+    if d["roe"] is not None: items.append(("ROE", f'{d["roe"]:.2f}%', _vcls(d["roe"])))
+    if d["debt"] is not None: items.append(("负债率", f'{d["debt"]:.1f}%', ""))
+    if d["chip_pct"] is not None: items.append(("获利盘", f'{d["chip_pct"]:.1f}%', ""))
+    if not items: return ""
+    cards = []
+    for i, (k, v, c) in enumerate(items):
+        cards.append(f'<div class="sm-card" style="--d:{i*0.06}s"><div class="sm-k">{esc(k)}</div><div class="sm-v {c}">{esc(v)}</div></div>')
+    return '<div class="sm-grid">' + "".join(cards) + "</div>"
+
+
+def _price_zone(d):
+    lo = d.get("c90lo"); hi = d.get("c90hi")
+    price = d.get("price"); avg = d.get("chip_avg")
+    ma20 = d.get("ma20"); ma60 = d.get("ma60")
+    if lo is None or hi is None or price is None: return ""
+    rng = hi - lo
+    if rng <= 0: return ""
+    def pos(v): return max(0, min(100, (v - lo) / rng * 100))
+    markers = []
+    markers.append(f'<div class="pz-mark" style="left:{pos(price):.1f}%"><span class="pz-dot" style="background:var(--accent2)"></span><span class="pz-lbl">现价 {price:.2f}</span></div>')
+    if avg: markers.append(f'<div class="pz-mark" style="left:{pos(avg):.1f}%"><span class="pz-dot" style="background:var(--warn)"></span><span class="pz-lbl">均成本 {avg:.2f}</span></div>')
+    if ma20: markers.append(f'<div class="pz-mark" style="left:{pos(ma20):.1f}%"><span class="pz-dot" style="background:var(--accent)"></span><span class="pz-lbl">MA20 {ma20:.2f}</span></div>')
+    if ma60: markers.append(f'<div class="pz-mark" style="left:{pos(ma60):.1f}%"><span class="pz-dot" style="background:#6b7280"></span><span class="pz-lbl">MA60 {ma60:.2f}</span></div>')
+    c70 = ""
+    if d.get("c70lo") and d.get("c70hi"):
+        l = pos(d["c70lo"]); r = pos(d["c70hi"])
+        c70 = f'<div class="pz-zone70" style="left:{l:.1f}%;width:{r-l:.1f}%"></div>'
+    return f'''<div class="pz-wrap reveal on">
+<div class="pz-title">筹码价格带</div>
+<div class="pz-bar">
+<div class="pz-zone90"></div>{c70}
+{"".join(markers)}
+</div>
+<div class="pz-labels"><span>{lo:.2f}</span><span>{hi:.2f}</span></div>
+</div>'''
+
+
+def _sentiment_gauge(up, down):
+    if up is None or down is None: return ""
+    total = up + down
+    if total == 0: return ""
+    up_ratio = up / total * 100
+    if up_ratio > 60: label, color = "偏多", "#ef4444"
+    elif up_ratio > 45: label, color = "中性", "#f59e0b"
+    else: label, color = "偏空", "#22c55e"
+    import math
+    cx, cy, rad = 100, 95, 70
+    angle = 180 * (up_ratio / 100)
+    ex = cx + rad * math.cos(math.radians(180 - angle))
+    ey = cy - rad * math.sin(math.radians(180 - angle))
+    return f'''<div class="sg-wrap reveal on"><div class="sg-title">市场情绪</div>
+<svg class="gauge" viewBox="0 0 200 110">
+<path d="M 30 95 A 70 70 0 0 1 170 95" fill="none" stroke="rgba(255,255,255,.06)" stroke-width="14" stroke-linecap="round"/>
+<path d="M 30 95 A 70 70 0 0 1 {ex:.1f} {ey:.1f}" fill="none" stroke="{color}" stroke-width="14" stroke-linecap="round" opacity=".85"/>
+<text x="100" y="80" text-anchor="middle" class="gauge-val" fill="{color}">{up_ratio:.1f}%</text>
+<text x="100" y="100" text-anchor="middle" class="gauge-lbl">{label}</text>
+<text x="30" y="108" text-anchor="middle" class="gauge-xs" fill="#22c55e">空</text>
+<text x="170" y="108" text-anchor="middle" class="gauge-xs" fill="#ef4444">多</text>
+</svg></div>'''
+
+
+def build_stock_dash(text):
+    d = ext_stock(text)
+    parts = []
+    rc = _rating_card(d)
+    if rc: parts.append(rc)
+    sm = _stock_metrics(d)
+    if sm: parts.append(sm)
+    pz = _price_zone(d)
+    if pz: parts.append(pz)
+    return '<div class="dashboard">' + "".join(parts) + "</div>" if parts else ""
+
+
+def build_daily_dash(text):
     idx = ext_idx(text)
     brd = ext_brd(text)
     sec = ext_sec(text)
     mgn = ext_mgn(text)
     parts = []
     if idx: parts.append(_index_cards(idx))
-    if brd["up"] is not None or brd["down"] is not None:
-        parts.append(f'<div class="dash-row"><div class="dash-cell">{_donut(brd["up"],brd["down"],brd["lu"],brd["ld"])}</div></div>')
+    sg = _sentiment_gauge(brd["up"], brd["down"])
+    dn = _donut(brd["up"], brd["down"], brd["lu"], brd["ld"])
+    if sg or dn:
+        cells = ""
+        if dn: cells += f'<div class="dash-cell">{dn}</div>'
+        if sg: cells += f'<div class="dash-cell">{sg}</div>'
+        if cells: parts.append(f'<div class="dash-row">{cells}</div>')
     up_sectors = [(s["n"], s["v"]) for s in sec if s["v"] > 0][:8]
     down_sectors = [(s["n"], s["v"]) for s in sec if s["v"] < 0][:8]
     if up_sectors:
@@ -420,7 +577,7 @@ p{margin:10px 0}
 ul,ol{margin:8px 0;padding-left:24px}
 li{margin:5px 0}
 li .kv-k{color:var(--muted);margin-right:8px;font-size:.95em}
-li .kv-v{font-weight:700;font-family:monospace;color:#fff}
+li .kv-v{font-weight:700;font-family:monospace;color:#fff;font-size:1.05em;text-shadow:0 0 12px rgba(255,255,255,.06)}
 li .kv-v.up{color:var(--up)}.li .kv-v.down{color:var(--down)}
 
 .tw{overflow-x:auto;margin:14px 0;border:1px solid var(--line);border-radius:12px;backdrop-filter:blur(10px)}
@@ -457,6 +614,38 @@ hr{border:none;height:1px;background:linear-gradient(90deg,transparent,var(--lin
 @keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
 @keyframes pulse{0%,100%{box-shadow:0 0 20px rgba(99,102,241,.1)}50%{box-shadow:0 0 40px rgba(99,102,241,.25)}}
 .idx-card:hover{animation:pulse 2s infinite}
+.rating-banner{display:flex;align-items:center;gap:20px;padding:24px 32px;border-radius:16px;margin:0 0 18px;backdrop-filter:blur(16px)}
+.rating-banner.rt-buy{background:linear-gradient(135deg,rgba(239,68,68,.12),rgba(239,68,68,.04));border:1px solid rgba(239,68,68,.25);box-shadow:0 4px 24px rgba(239,68,68,.08)}
+.rating-banner.rt-sell{background:linear-gradient(135deg,rgba(34,197,94,.12),rgba(34,197,94,.04));border:1px solid rgba(34,197,94,.25)}
+.rt-label{font-size:12px;color:var(--muted);letter-spacing:3px;text-transform:uppercase}
+.rt-val{font-size:32px;font-weight:800;background:linear-gradient(135deg,#ef4444,#f97316);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.rt-buy .rt-val{background:linear-gradient(135deg,#ef4444,#f97316);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.rt-sell .rt-val{background:linear-gradient(135deg,#22c55e,#14b8a6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.rt-tgt{margin-left:auto;font-size:18px;font-weight:700;color:var(--warn);font-family:monospace}
+.sm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:14px 0}
+.sm-card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;backdrop-filter:blur(12px);transition:.3s;animation:fadeUp .5s both;animation-delay:var(--d,0s)}
+.sm-card:hover{background:var(--panel2);border-color:rgba(99,102,241,.3);transform:translateY(-2px);box-shadow:var(--glow)}
+.sm-k{font-size:10px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px}
+.sm-v{font-size:20px;font-weight:700;font-family:monospace;color:#fff}
+.sm-v.up{color:var(--up)}.sm-v.down{color:var(--down)}
+.pz-wrap{margin:16px 0;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px;backdrop-filter:blur(12px)}
+.pz-title{font-size:12px;color:var(--muted);letter-spacing:2px;margin-bottom:12px}
+.pz-bar{position:relative;height:24px;border-radius:12px;overflow:visible;background:rgba(255,255,255,.03)}
+.pz-zone90{position:absolute;top:0;left:0;right:0;height:100%;border-radius:12px;background:linear-gradient(90deg,rgba(34,197,94,.15),rgba(255,255,255,.05),rgba(239,68,68,.15))}
+.pz-zone70{position:absolute;top:2px;height:calc(100% - 4px);border-radius:10px;background:rgba(99,102,241,.12);border:1px solid rgba(99,102,241,.2)}
+.pz-mark{position:absolute;top:-6px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:4px;z-index:2}
+.pz-dot{width:10px;height:10px;border-radius:50%;border:2px solid rgba(255,255,255,.3);box-shadow:0 0 8px rgba(255,255,255,.2)}
+.pz-lbl{font-size:10px;color:var(--muted);white-space:nowrap;font-family:monospace}
+.pz-labels{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:8px;font-family:monospace}
+.sg-wrap{text-align:center;padding:8px}
+.sg-title{font-size:12px;color:var(--muted);letter-spacing:2px;margin-bottom:6px}
+.gauge-xs{font-size:9px}
+.dash-row{display:flex;gap:16px;justify-content:center;flex-wrap:wrap;margin:16px 0}
+.dash-cell{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:12px;backdrop-filter:blur(12px);min-width:200px}
+.content h2{position:relative;overflow:hidden}
+.content h2::after{content:"";position:absolute;bottom:0;left:0;right:0;height:1px;background:linear-gradient(90deg,rgba(99,102,241,.4),transparent 70%)}
+.content strong{color:#c4b5fd;font-weight:700}
+.content h2 + p, .content h2 + ul {margin-top:12px}
 """
 
 
