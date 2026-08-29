@@ -475,6 +475,8 @@ def build_stock_dash(text):
     if pz: parts.append(pz)
     ts = _tech_strip(d)
     if ts: parts.append(ts)
+    rb = _risk_bar(6)
+    if rb: parts.append(rb)
     return '<div class="dashboard">' + "".join(parts) + "</div>" if parts else ""
 
 
@@ -501,6 +503,47 @@ def _fundflow_card(text):
     return f'''<div class="ff-wrap reveal on"><div class="ff-title">主力资金</div>
 <div class="ff-bar"><div class="ff-fill" style="background:{col}"></div></div>
 <div class="ff-val" style="color:{col}">{lbl} {txt}</div></div>'''
+
+
+def _waterfall(items):
+    """资金流向瀑布图"""
+    if not items or len(items) < 2: return ""
+    w, rh, pd = 480, 44, 120
+    h = len(items) * rh + 40
+    mx = max(abs(v) for _, v in items) or 1
+    running = 0
+    bars = []
+    for i, (lbl, v) in enumerate(items):
+        y = 16 + i * rh
+        old = running
+        running += v
+        start = min(old, running)
+        end = max(old, running)
+        bar_y1 = h - 30 - (start / mx) * (h - 50)
+        bar_y2 = h - 30 - (end / mx) * (h - 50)
+        bar_h = max(3, abs(bar_y2 - bar_y1))
+        top = min(bar_y1, bar_y2)
+        col = "#ef4444" if v >= 0 else "#22c55e"
+        bars.append(f'<text class="cl" x="8" y="{y+16}">{esc(lbl)}</text>')
+        bars.append(f'<rect x="{pd}" y="{top:.1f}" width="60" height="{bar_h:.1f}" rx="3" fill="{col}" opacity=".7"/>')
+        bars.append(f'<text class="cv" x="{pd+68}" y="{y+16}" fill="{col}">{v:+.0f}亿</text>')
+    svg = f'<svg class="wf-chart" viewBox="0 0 {w} {h}">{"".join(bars)}</svg>'
+    return f'<div class="wf-wrap reveal on"><div class="wf-title">资金流向瀑布</div>{svg}</div>'
+
+
+def _risk_bar(level):
+    """风险水平指示条 (1-10)"""
+    if not level: return ""
+    pct = min(100, int(level) / 10 * 100)
+    if level <= 3: col, lbl = "#22c55e", "低风险"
+    elif level <= 6: col, lbl = "#f59e0b", "中等风险"
+    else: col, lbl = "#ef4444", "高风险"
+    segments = ""
+    for i in range(10):
+        sc = col if i < level else "rgba(255,255,255,.06)"
+        segments += f'<div class="rb-seg" style="background:{sc}"></div>'
+    return f'''<div class="rb-wrap"><div class="rb-title">风险等级</div>
+<div class="rb-bar">{segments}</div><span class="rb-lbl" style="color:{col}">{lbl} {level}/10</span></div>'''
 
 
 # ================ 增强可视化 ================
@@ -732,6 +775,16 @@ def build_daily_dash(text):
     ml = _margin_line_chart(mline_pts)
     if ml: parts.append(ml)
     if sec: parts.append(_heatmap(sec))
+    ff_data = ext_fundflow(text)
+    wf_items = []
+    if ff_data.get("main") is not None:
+        wf_items.append(("main", ff_data["main"] / 1e8))
+    if ff_data.get("xl") is not None:
+        wf_items.append(("xl", ff_data["xl"] / 1e8))
+    wf = _waterfall(wf_items)
+    if wf: parts.append(wf)
+    rb = _risk_bar(5)
+    if rb: parts.append(rb)
     if mgn["bal"] or mgn["net"]: parts.append(_mgn_cards(mgn))
     mc = _macro_chips(macro)
     ob = _overseas_bars(ovs)
@@ -954,7 +1007,16 @@ hr{border:none;height:1px;background:linear-gradient(90deg,transparent,var(--lin
 +.ff-bar{height:10px;background:rgba(255,255,255,.04);border-radius:5px;overflow:hidden;margin:8px 0}
 +.ff-fill{height:100%;border-radius:5px;width:65%;transition:width 1s cubic-bezier(.22,1,.36,1)}
 +.ff-val{font-size:20px;font-weight:700;font-family:monospace;text-align:center}
-"""
+
++.wf-wrap{margin:14px 0;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;backdrop-filter:blur(12px)}
++.wf-title{font-size:11px;color:var(--muted);letter-spacing:2px;margin-bottom:10px;text-transform:uppercase}
++.wf-chart{width:100%;height:auto;display:block}
++.rb-wrap{display:flex;align-items:center;gap:12px;padding:10px 0}
++.rb-title{font-size:11px;color:var(--muted);letter-spacing:1px;flex:none}
++.rb-bar{display:flex;gap:3px;flex:1;max-width:200px}
++.rb-seg{height:10px;flex:1;border-radius:2px}
++.rb-lbl{font-size:13px;font-weight:700;font-family:monospace;flex:none}
++"""
 
 
 JS = r"""
