@@ -327,7 +327,7 @@ def ext_stock(text):
         if m and not r["rating"]: r["rating"] = m.group(1).strip()
         m = re.search(r"目标区间\s*([\d.]+)[-~至]\s*([\d.]+)", line)
         if m and not r["target"]: r["target"] = m.group(1) + "-" + m.group(2)
-        m = re.search(r"收盘\s*([\d.]+)\s*元", line)
+        m = re.search(r"(?:收盘|现价)\s*([\d.]+)\s*元", line)
         if m and r["price"] is None: r["price"] = float(m.group(1))
         m = re.search(r"PE\s*TTM\s*([\d.]+)", line)
         if m and r["pe"] is None: r["pe"] = float(m.group(1))
@@ -349,15 +349,15 @@ def ext_stock(text):
         if m and r["chip_pct"] is None: r["chip_pct"] = float(m.group(1))
         m = re.search(r"平均成本\s*([\d.]+)", line)
         if m and r["chip_avg"] is None: r["chip_avg"] = float(m.group(1))
-        m = re.search(r"90%\s*成本区间\s*([\d.]+)\s*至\s*([\d.]+)", line)
+        m = re.search(r"90%\s*成本区间\s*[约]?\s*([\d.]+)\s*[至\-]+\s*([\d.]+)", line)
         if m: r["c90lo"] = float(m.group(1)); r["c90hi"] = float(m.group(2))
-        m = re.search(r"70%\s*成本区间\s*([\d.]+)\s*至\s*([\d.]+)", line)
+        m = re.search(r"70%\s*成本区间\s*[约]?\s*([\d.]+)\s*[至\-]+\s*([\d.]+)", line)
         if m: r["c70lo"] = float(m.group(1)); r["c70hi"] = float(m.group(2))
-        m = re.search(r"MA20\s*([\d.]+)", line)
+        m = re.search(r"MA20\s*[为约]?\s*([\d.]+)", line)
         if m and r["ma20"] is None: r["ma20"] = float(m.group(1))
         m = re.search(r"MA60\s*([\d.]+)", line)
         if m and r["ma60"] is None: r["ma60"] = float(m.group(1))
-        m = re.search(r"RSI\s*([\d.]+)", line)
+        m = re.search(r"RSI\s*[约约]?\s*([\d.]+)", line)
         if m and r["rsi"] is None: r["rsi"] = float(m.group(1))
         m = re.search(r"归母.*?([+\-]?\d+\.?\d*)%", line)
         if m and r["profit_chg"] is None:
@@ -633,15 +633,15 @@ def ext_overseas(text):
 
 def ext_fundflow(text):
     r = {}
-    for line in text.splitlines()[:200]:
-        m = re.search(r"主力.*?净流入.*?([+\-]?[\d.,]+)\s*(亿|万)", line)
-        if m and "main" not in r:
-            sign = -1 if m.group(1).startswith("-") else 1
-            r["main"] = sign * float(m.group(1).replace(",","").lstrip("+-")) * (1e8 if m.group(2)=="亿" else 1e4)
-        m = re.search(r"超大单.*?净流入.*?([+\-]?[\d.,]+)\s*(亿|万)", line)
-        if m and "xl" not in r:
-            sign = -1 if m.group(1).startswith("-") else 1
-            r["xl"] = sign * float(m.group(1).replace(",","").lstrip("+-")) * (1e8 if m.group(2)=="亿" else 1e4)
+    for line in text.splitlines()[:400]:
+        for pat, key in [(r"主力.*?净流入.*?([+\-]?[\d.,]+)\s*(亿|万)", "main"), (r"主力.*?净流出.*?([\d.,]+)\s*(亿|万)", "main_neg"), (r"主力净买入[：:]?\s*([+\-]?[\d.,]+)\s*(亿|万)", "main"), (r"超大单.*?净流入.*?([+\-]?[\d.,]+)\s*(亿|万)", "xl"), (r"超大单.*?净流出.*?([\d.,]+)\s*(亿|万)", "xl_neg"), (r"超大单净买入[：:]?\s*([+\-]?[\d.,]+)\s*(亿|万)", "xl")]:
+            m = re.search(pat, line)
+            if m:
+                sign = -1 if ("neg" in key or m.group(1).startswith("-")) else 1
+                val = sign * float(m.group(1).replace(",","").lstrip("+-")) * (1e8 if m.group(2)=="亿" else 1e4)
+                base_key = key.replace("_neg","")
+                if base_key not in r:
+                    r[base_key] = val
     return r
 
 def ext_margin_trend(text):
@@ -761,20 +761,19 @@ def build_daily_dash(text):
     ovs = ext_overseas(text)
     mline_pts = ext_margin_trend(text)
     parts = []
-    if idx: parts.append(_index_cards(idx))
-    mgn_cards = _mgn_cards(mgn)
+    if idx: parts.append('<div class="dash-sec"><div class="dash-sec-t">指数表现</div>' + _index_cards(idx) + '</div>')
     sg = _sentiment_gauge(brd["up"], brd["down"])
-    if mgn_cards or sg:
-        row = ""
-        if sg: row += f'<div class="dash-cell">{sg}</div>'
-        if mgn_cards: row += mgn_cards
-        if row: parts.append(f'<div class="dash-row">{row}</div>')
     dn = _donut(brd["up"], brd["down"], brd["lu"], brd["ld"])
-    if dn:
-        parts.append(f'<div class="dash-row"><div class="dash-cell">{dn}</div></div>')
+    if sg or dn:
+        row = ""
+        if dn: row += f'<div class="dash-cell" style="flex:0 0 220px">{dn}</div>'
+        if sg: row += f'<div class="dash-cell" style="flex:0 0 260px">{sg}</div>'
+        mgn_cards = _mgn_cards(mgn)
+        if mgn_cards: row += f'<div style="flex:1;min-width:260px">{mgn_cards}</div>'
+        if row: parts.append(f'<div class="dash-row" style="align-items:stretch">{row}</div>')
     ml = _margin_line_chart(mline_pts)
-    if ml: parts.append(ml)
-    if sec: parts.append(_heatmap(sec))
+    if ml: parts.append('<div class="dash-sec"><div class="dash-sec-t">两融走势</div>' + ml + '</div>')
+    if sec: parts.append('<div class="dash-sec"><div class="dash-sec-t">板块热力图</div>' + _heatmap(sec) + '</div>')
     ff_data = ext_fundflow(text)
     wf_items = []
     if ff_data.get("main") is not None:
@@ -792,7 +791,7 @@ def build_daily_dash(text):
         row = ""
         if mc: row += mc
         if ob: row += ob
-        parts.append(f'<div class="dash-two">{row}</div>')
+        parts.append('<div class="dash-sec"><div class="dash-sec-t">宏观与海外</div>' + f'<div class="dash-two">{row}</div>' + '</div>')
     if not parts: return ""
     return '<div class="dashboard">' + "".join(parts) + "</div>"
 
@@ -1047,6 +1046,10 @@ JS = r"""
   if(topBtn)topBtn.addEventListener("click",()=>window.scrollTo({top:0,behavior:"smooth"}));
   onScroll();
 })();
+
++.dash-sec{margin:16px 0}
++.dash-sec-t{font-size:12px;color:var(--accent2);letter-spacing:3px;text-transform:uppercase;margin-bottom:10px;padding-left:12px;border-left:3px solid var(--accent)}
++
 """
 
 _ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg>'
