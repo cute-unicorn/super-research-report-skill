@@ -21,6 +21,7 @@
 - 情绪与资金结构：北向、涨跌停、连板、机构/主力/大户/散户资金（近似口径）。
 - 风控纪律：每只个股与板块都给出止损、止盈与风险提示；目标价与止损均为示例参数。
 - 可接入定时自动化：配合 Codex 定时任务，每日自动产出并保存研报。
+- 可选网页可视化：将研报渲染为玻璃拟态风格的自包含 HTML 页面（零依赖，双击打开）。
 
 ## 目录结构
 
@@ -37,6 +38,9 @@
     ├── SKILL.md
     ├── references/report_spec.md
     └── scripts/fetch_stock_data.ps1
+└── report-web/                      # 可选：网页可视化模块
+    ├── SKILL.md
+    └── scripts/render_report.py     # Markdown → 炫酷 HTML（零依赖）
 ```
 
 ## 工作流概览
@@ -121,6 +125,14 @@ powershell -ExecutionPolicy Bypass -File "<技能目录>\daily-market-research\s
 ```text
 每天早上 07:00 使用 daily-market-research 技能，生成今日两份市场研报，保存到 D:\codex\研报
 ```
+
+### 网页可视化（可选）
+
+```bash
+python report-web/scripts/render_report.py --input "每日市场研报_2026-08-25.md" --output "daily_report.html"
+```
+
+输出单文件 HTML，双击即可在浏览器中离线打开。内置玻璃拟态暗色主题、市场仪表盘（指数卡片、涨跌环形图、行业条形图）、数字动画与阅读进度条。
 
 ## 研报能力
 

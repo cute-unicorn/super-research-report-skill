@@ -1,0 +1,555 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""炫酷网页版研报渲染器 | 零依赖 | 玻璃拟态 | 自动可视化"""
+import argparse, datetime, html, os, re, sys
+
+def esc(t): return html.escape(t, quote=True)
+_CS = re.compile(r"`([^`]+)`")
+
+def _inl(t):
+    t = esc(t)
+    t = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", t)
+    t = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"<em>\1</em>", t)
+    t = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", lambda m: f'<a href="{esc(m.group(2))}">{m.group(1)}</a>', t)
+    return t
+
+def r_inline(t):
+    parts, pos = [], 0
+    for m in _CS.finditer(t):
+        parts.append(_inl(t[pos:m.start()])); parts.append(f"<code>{esc(m.group(1))}</code>"); pos = m.end()
+    parts.append(_inl(t[pos:])); return "".join(parts)
+
+_NUM = re.compile(r"([+\-]?)\s*([\d][\d,]*(?:\.\d+)?)\s*(万亿|亿|万|%)?")
+_UNIT = re.compile(r"(万亿|亿|万|%)")
+
+def _pnum(v):
+    m = _NUM.search(v.strip())
+    if not m: return None
+    s = -1.0 if m.group(1) == "-" else 1.0
+    return s * float(m.group(2).replace(",", "")) * {"万亿":1e12,"亿":1e8,"万":1e4,"%":1.0}.get(m.group(3),1.0)
+
+def _unit(v):
+    m = _UNIT.search(v.strip()); return m.group(1) if m else ""
+
+def _fmt(v, uh=""):
+    if v is None: return "—"
+    a = abs(v)
+    if uh == "%": return f"{v:+.2f}%"
+    if a >= 1e12: return f"{v/1e12:.2f}万亿"
+    if a >= 1e8: return f"{v/1e8:.2f}亿"
+    if a >= 1e4: return f"{v/1e4:.1f}万"
+    return f"{int(v)}" if v == int(v) else f"{v:.2f}"
+
+def _vcls(v):
+    if v is None: return ""
+    return "up" if v > 0 else ("down" if v < 0 else "flat")
+
+def ext_idx(text):
+    ret, seen = [], set()
+    pats = [(r"上证指数.*?([+\-]?\d+\.?\d*)%","上证指数"),(r"深证成指.*?([+\-]?\d+\.?\d*)%","深证成指"),(r"创业板指.*?([+\-]?\d+\.?\d*)%","创业板指"),(r"沪深300.*?([+\-]?\d+\.?\d*)%","沪深300")]
+    for line in text.splitlines()[:60]:
+        for p, n in pats:
+            m = re.search(p, line)
+            if m and n not in seen:
+                try: seen.add(n); ret.append({"n":n,"v":float(m.group(1)),"p":""})
+                except: pass
+    for line in text.splitlines()[:60]:
+        for p, n in [(r"上证指数[：:]\s*([\d,.]+)","上证指数"),(r"深证成指[：:]\s*([\d,.]+)","深证成指"),(r"创业板指[：:]\s*([\d,.]+)","创业板指"),(r"沪深300[：:]\s*([\d,.]+)","沪深300")]:
+            m = re.search(p, line)
+            if m:
+                for i in ret:
+                    if i["n"] == n: i["p"] = m.group(1); break
+    return ret
+
+def ext_brd(text):
+    r = {"up":None,"down":None,"lu":None,"ld":None,"to":None}
+    for line in text.splitlines()[:80]:
+        for k, p in [("up",r"上涨家数[：:]\s*([\d,]+)"),("down",r"下跌家数[：:]\s*([\d,]+)"),("lu",r"涨停家数[：:]\s*([\d,]+)"),("ld",r"跌停家数[：:]\s*([\d,]+)")]:
+            m = re.search(p, line)
+            if m: r[k] = int(m.group(1).replace(",",""))
+        m = re.search(r"成交额[：:]\s*约?\s*([\d.]+)\s*(万亿|亿)", line)
+        if m: r["to"] = float(m.group(1)) * (1e12 if m.group(2)=="万亿" else 1e8)
+    return r
+
+def ext_sec(text):
+    ret, on = [], False
+    for line in text.splitlines():
+        if re.search(r"^#{1,3}.*?(行业与风格|领涨|涨幅|涨居前|领跌)", line): on = True; continue
+        if re.search(r"^#{1,3}\s*", line) and on and ret: break
+        if on:
+            for m in [re.match(r"^[-*]\s+(.+?)\s*([+\-]?\d+\.?\d*)%", line), re.match(r"^\s*\d+[.、]\s+(.+?)\s*([+\-]?\d+\.?\d*)%", line)]:
+                if m:
+                    try: ret.append({"n":m.group(1).strip().split("：")[0][:14],"v":float(m.group(2))})
+                    except: pass
+    return ret[:16]
+
+def ext_mgn(text):
+    r = {"bal":None,"fin":None,"sec":None,"net":None,"chg":None}
+    for line in text.splitlines()[:200]:
+        for k, p in [("bal",r"两融余额[：:]\s*([\d.,]+)\s*(万亿|亿)"),("fin",r"融资余额[：:]\s*([\d.,]+)\s*(万亿|亿)"),("sec",r"融券余额[：:]\s*([\d.,]+)\s*(万亿|亿)")]:
+            m = re.search(p, line)
+            if m and r[k] is None: r[k] = float(m.group(1).replace(",","")) * (1e12 if m.group(2)=="万亿" else 1e8)
+        m = re.search(r"融资净买入[：:]\s*([+\-]?[\d.,]+)\s*(万亿|亿)", line)
+        if m and r["net"] is None: r["net"] = (-1 if m.group(1).startswith("-") else 1) * float(m.group(1).lstrip("+-").replace(",","")) * (1e12 if m.group(2)=="万亿" else 1e8)
+        m = re.search(r"环比.*?([+\-]?\d+\.?\d*)%", line)
+        if m and r["chg"] is None:
+            try: r["chg"] = float(m.group(1))
+            except: pass
+    return r
+
+def ext_title(text, path):
+    for l in text.splitlines():
+        m = re.match(r"^#\s+(.+)$", l)
+        if m: return m.group(1).strip()
+    return re.sub(r"\.md$","",os.path.basename(path),flags=re.I)
+
+def ext_date(path):
+    m = re.search(r"(\d{4}-\d{2}-\d{2})", os.path.basename(path))
+    return m.group(1) if m else datetime.date.today().isoformat()
+
+def ext_badges(text, path):
+    n = os.path.basename(path); b = ["A股"]
+    if "客观评级" in text or "深度研报" in n: b.append("个股深度")
+    elif "深度分析与标的策略" in n: b.append("每日·深度版")
+    else: b.append("每日·基础版")
+    if "两融" in text: b.append("两融")
+    if "非共识" in text: b.append("α")
+    return b
+
+def ext_toc(text):
+    toc, code, sec = [], False, 0
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("```"): code = not code; continue
+        if code: continue
+        m = re.match(r"^(#{1,6})\s+(.+)$", line)
+        if m: sec += 1; toc.append((len(m.group(1)), m.group(2).strip(), f"sec-{sec}"))
+    return toc
+
+
+# ================ 块级渲染 ================
+class Ctx:
+    def __init__(self): self.toc, self.sec = [], 0
+
+def _break(line):
+    s = line.lstrip()
+    return (s.startswith("#") or s.startswith("|") or s.startswith(">") or s.startswith("```")
+        or bool(re.match(r"^\s*[-*+]\s+", line)) or bool(re.match(r"^\s*\d+[.、]\s+", line))
+        or bool(re.match(r"^\s*([-*_])\s*(\1\s*){2,}$", line)))
+
+def _li_kv(t):
+    m = re.match(r"^(.+?)[：:]\s*(.+)$", t)
+    if m and re.search(r"\d", m.group(2)):
+        k = r_inline(m.group(1).strip()); v = r_inline(m.group(2).strip())
+        c = _vcls(_pnum(m.group(2)))
+        return f'<span class="kv-k">{k}</span><span class="kv-v {c}">{v}</span>'
+    return r_inline(t)
+
+def _split_row(l):
+    l = l.strip()
+    if l.startswith("|"): l = l[1:]
+    if l.endswith("|"): l = l[:-1]
+    return [c.strip() for c in l.split("|")]
+
+def render_blocks(lines, ctx, top=True):
+    out, i, n = [], 0, len(lines)
+    while i < n:
+        line = lines[i].rstrip("\n"); s = line.lstrip()
+        if s.startswith("```"):
+            buf = []; i += 1
+            while i < n and not lines[i].startswith("```"): buf.append(lines[i].rstrip("\n")); i += 1
+            i += 1
+            out.append(f"<pre><code>{esc(chr(10).join(buf))}</code></pre>"); continue
+        m = re.match(r"^(#{1,6})\s+(.*)$", line)
+        if m:
+            lvl = len(m.group(1)); title = m.group(2).strip()
+            ctx.sec += 1; anc = f"sec-{ctx.sec}"
+            if top: ctx.toc.append((lvl, title, anc))
+            out.append(f'<h{lvl} id="{anc}">{r_inline(title)}</h{lvl}>'); i += 1; continue
+        if s.startswith("|") and i + 1 < n and re.match(r"^\s*\|?[\s:\-|]+\|?\s*$", lines[i+1]):
+            hdr = _split_row(line); i += 2; body = []
+            while i < n and lines[i].lstrip().startswith("|"): body.append(_split_row(lines[i])); i += 1
+            out.append(_table(hdr, body)); continue
+        if re.match(r"^\s*([-*_])\s*(\1\s*){2,}$", line): out.append("<hr>"); i += 1; continue
+        if s.startswith(">"):
+            buf = []
+            while i < n and lines[i].startswith(">"): buf.append(lines[i][1:].lstrip()); i += 1
+            out.append("<blockquote>" + render_blocks(buf, ctx, False) + "</blockquote>"); continue
+        if re.match(r"^\s*[-*+]\s+", line):
+            items = []
+            while i < n and re.match(r"^\s*[-*+]\s+", lines[i]): items.append(re.sub(r"^\s*[-*+]\s+","",lines[i].rstrip("\n"))); i += 1
+            out.append("<ul>" + "".join(f"<li>{_li_kv(it)}</li>" for it in items) + "</ul>"); continue
+        if re.match(r"^\s*\d+[.、]\s+", line):
+            items = []
+            while i < n and re.match(r"^\s*\d+[.、]\s+", lines[i]): items.append(re.sub(r"^\s*\d+[.、]\s+","",lines[i].rstrip("\n"))); i += 1
+            out.append("<ol>" + "".join(f"<li>{_li_kv(it)}</li>" for it in items) + "</ol>"); continue
+        buf = [line]; i += 1
+        while i < n and lines[i].strip() and not _break(lines[i]): buf.append(lines[i].rstrip("\n")); i += 1
+        out.append("<p>" + r_inline(" ".join(x.strip() for x in buf if x.strip())) + "</p>")
+    return "\n".join(out)
+
+
+# ================ 表格 + SVG 图表 ================
+def _table(hdr, body):
+    if not hdr: return ""
+    th = "".join(f"<th>{r_inline(c)}</th>" for c in hdr)
+    rows = []
+    for r in body:
+        cs = (r + [""] * len(hdr))[:len(hdr)]
+        rows.append("<tr>" + "".join(f"<td>{r_inline(c)}</td>" for c in cs) + "</tr>")
+    tbl = f"<div class='tw'><table><thead><tr>{th}</tr></thead><tbody>{''.join(rows)}</tbody></table></div>"
+    return tbl + _chart(hdr, body)
+
+def _chart(hdr, body):
+    ncols = len(hdr)
+    ncs = []
+    for c in range(ncols):
+        vals, us = [], set()
+        for r in body:
+            if c < len(r): vals.append(_pnum(r[c])); us.add(_unit(r[c]))
+        ok = [v for v in vals if v is not None]
+        if len(ok) >= max(2, int(len(vals)*0.7)) and len(us) == 1: ncs.append(c)
+    if not ncs: return ""
+    c = ncs[-1]; items = []
+    for r in body:
+        v = _pnum(r[c]) if c < len(r) else None
+        lbl = r[0].strip()[:14] if r else ""
+        if v is not None and lbl: items.append((lbl, v))
+    if len(items) < 2: return ""
+    mx = max(abs(v) for _, v in items) or 1
+    w, rh, bh, pd = 560, 36, 20, 150
+    h = len(items) * rh + 24
+    svg = [f'<svg class="cchart" viewBox="0 0 {w} {h}">']
+    for idx, (lbl, v) in enumerate(items):
+        y = 20 + idx * rh; bw = max(6, abs(v)/mx*(w-pd-48))
+        col = "#ef4444" if v >= 0 else "#22c55e"
+        svg.append(f'<text class="cl" x="8" y="{y+14}">{esc(lbl)}</text>')
+        svg.append(f'<rect class="cbar" x="{pd}" y="{y}" width="{bw:.1f}" height="{bh}" rx="4" fill="{col}"/>')
+        svg.append(f'<text class="cv" x="{pd+bw+8:.0f}" y="{y+14}">{esc(_fmt(v))}</text>')
+    svg.append("</svg>")
+    return f'<div class="tc"><div class="tc-t">自动图表 · {esc(hdr[c].strip())}</div>{"".join(svg)}</div>'
+
+
+# ================ 仪表盘 SVG ================
+def _gauge(value, label, unit, color, radius=70):
+    """半圆仪表盘"""
+    cx, cy = 100, 95
+    if value is None: value = 0
+    pct = max(0, min(1, abs(value) / 100))
+    angle = 180 * pct
+    end_x = cx + radius * -1 * (1 if value < 0 else 1) * (1 - pct) if False else cx + radius * (1 - 2*pct) if value < 0 else cx + radius * pct * 2 - radius
+    import math
+    ex = cx + radius * math.cos(math.radians(180 - angle))
+    ey = cy - radius * math.sin(math.radians(180 - angle))
+    large = 1 if angle > 180 else 0
+    path = f"M {cx-radius} {cy} A {radius} {radius} 0 {large} 1 {ex:.1f} {ey:.1f}"
+    return f'''<svg class="gauge" viewBox="0 0 200 110">
+<path d="M {cx-radius} {cy} A {radius} {radius} 0 0 1 {cx+radius} {cy}" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="12" stroke-linecap="round"/>
+<path class="gauge-arc" d="{path}" fill="none" stroke="{color}" stroke-width="12" stroke-linecap="round" style="stroke-dasharray:{3.14159*radius:.0f};stroke-dashoffset:{3.14159*radius*(1-pct):.0f}"/>
+<text class="gauge-val" x="{cx}" y="{cy-8}" text-anchor="middle" fill="{color}">{_fmt(value, unit)}</text>
+<text class="gauge-lbl" x="{cx}" y="{cy+14}" text-anchor="middle">{esc(label)}</text>
+</svg>'''
+
+def _donut(up, down, lu, ld):
+    """市场宽度环形图"""
+    total = (up or 0) + (down or 0)
+    if total == 0: return ""
+    up_pct = (up or 0) / total
+    cx, cy, r = 80, 80, 60
+    circ = 2 * 3.14159 * r
+    up_len = circ * up_pct
+    down_len = circ * (1 - up_pct)
+    up_pct_s = f"{up_pct*100:.1f}%"
+    down_pct_s = f"{(1-up_pct)*100:.1f}%"
+    lu_s = f"{lu or 0}"
+    ld_s = f"{ld or 0}"
+    return f'''<svg class="donut" viewBox="0 0 160 160">
+<circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="#22c55e" stroke-width="16" stroke-dasharray="{down_len:.1f} {circ:.1f}" transform="rotate(-90 {cx} {cy})"/>
+<circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="#ef4444" stroke-width="16" stroke-dasharray="{up_len:.1f} {circ:.1f}" stroke-dashoffset="{-down_len:.1f}" transform="rotate(-90 {cx} {cy})"/>
+<text x="{cx}" y="{cy-6}" text-anchor="middle" class="donut-big" fill="#ef4444">{up_pct_s}</text>
+<text x="{cx}" y="{cy+14}" text-anchor="middle" class="donut-sm">上涨占比</text>
+<text x="{cx}" y="{cy+30}" text-anchor="middle" class="donut-xs" fill="var(--muted)">涨 {up or "—"} / 跌 {down or "—"}</text>
+</svg>'''
+
+def _hbar(items, color_up="#ef4444", color_down="#22c55e"):
+    """横向条形图（带渐变动画）"""
+    if not items: return ""
+    mx = max(abs(v) for _, v in items) or 1
+    w, rh, bh, pd = 520, 36, 22, 130
+    h = len(items) * rh + 20
+    svg = [f'<svg class="hbar" viewBox="0 0 {w} {h}">']
+    for i, (lbl, v) in enumerate(items):
+        y = 16 + i * rh; bw = max(4, abs(v)/mx*(w-pd-60))
+        col = color_up if v >= 0 else color_down
+        svg.append(f'<text class="cl" x="8" y="{y+15}">{esc(lbl)}</text>')
+        svg.append(f'<defs><linearGradient id="g{i}"><stop offset="0%" stop-color="{col}" stop-opacity="0.3"/><stop offset="100%" stop-color="{col}" stop-opacity="0.9"/></linearGradient></defs>')
+        svg.append(f'<rect class="cbar" x="{pd}" y="{y}" width="{bw:.1f}" height="{bh}" rx="5" fill="url(#g{i})"/>')
+        svg.append(f'<text class="cv" x="{pd+bw+8:.0f}" y="{y+15}" fill="{col}">{v:+.2f}%</text>')
+    svg.append("</svg>")
+    return "".join(svg)
+
+def _index_cards(indices):
+    if not indices: return ""
+    cards = []
+    for i, ix in enumerate(indices):
+        cls = _vcls(ix["v"])
+        pt = ix.get("p", "")
+        cards.append(f'''<div class="idx-card" style="--d:{i*0.08}s">
+<div class="idx-name">{esc(ix["n"])}</div>
+<div class="idx-pt">{esc(pt) if pt else "&nbsp;"}</div>
+<div class="idx-val {cls}" data-val="{ix["v"]:+.2f}">{ix["v"]:+.2f}%</div>
+</div>''')
+    return '<div class="idx-grid">' + "".join(cards) + "</div>"
+
+def _mgn_cards(m):
+    if m["bal"] is None and m["net"] is None: return ""
+    cards = []
+    if m["bal"]: cards.append(f'<div class="mgn-card"><span class="k">两融余额</span><span class="v">{_fmt(m["bal"])}</span></div>')
+    if m["net"] is not None: cards.append(f'<div class="mgn-card"><span class="k">融资净买入</span><span class="v {_vcls(m["net"])}">{_fmt(m["net"])}</span></div>')
+    if m["chg"] is not None: cards.append(f'<div class="mgn-card"><span class="k">环比</span><span class="v {_vcls(m["chg"])}">{m["chg"]:+.2f}%</span></div>')
+    return '<div class="mgn-grid">' + "".join(cards) + "</div>"
+
+def build_dashboard(text):
+    """生成仪表盘 HTML 块（如果数据可用）"""
+    idx = ext_idx(text)
+    brd = ext_brd(text)
+    sec = ext_sec(text)
+    mgn = ext_mgn(text)
+    parts = []
+    if idx: parts.append(_index_cards(idx))
+    if brd["up"] is not None or brd["down"] is not None:
+        parts.append(f'<div class="dash-row"><div class="dash-cell">{_donut(brd["up"],brd["down"],brd["lu"],brd["ld"])}</div></div>')
+    up_sectors = [(s["n"], s["v"]) for s in sec if s["v"] > 0][:8]
+    down_sectors = [(s["n"], s["v"]) for s in sec if s["v"] < 0][:8]
+    if up_sectors:
+        parts.append(f'<div class="sec-block"><div class="sec-t">领涨板块</div>{_hbar(up_sectors)}</div>')
+    if down_sectors:
+        parts.append(f'<div class="sec-block"><div class="sec-t">领跌板块</div>{_hbar(down_sectors)}</div>')
+    if mgn["bal"] or mgn["net"]: parts.append(_mgn_cards(mgn))
+    if not parts: return ""
+    return '<div class="dashboard">' + "".join(parts) + "</div>"
+
+
+# ================ CSS ================
+CSS = r"""
+:root{--bg:#080c1a;--panel:rgba(255,255,255,.04);--panel2:rgba(255,255,255,.07);
+--ink:#e8ecf1;--muted:#7a8699;--line:rgba(255,255,255,.07);--accent:#6366f1;
+--accent2:#a78bfa;--up:#ef4444;--down:#22c55e;--warn:#f59e0b;
+--side:rgba(8,12,26,.85);--grad:linear-gradient(135deg,#667eea,#764ba2);
+--glow:0 0 30px rgba(99,102,241,.15);--glow2:0 0 60px rgba(118,75,162,.1)}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;font-family:"Microsoft YaHei","PingFang SC","Noto Sans SC",-apple-system,sans-serif;background:var(--bg);color:var(--ink);line-height:1.75;letter-spacing:0;overflow-x:hidden}
+body::before{content:"";position:fixed;inset:0;background:radial-gradient(ellipse at 20% 20%,rgba(99,102,241,.08) 0%,transparent 50%),radial-gradient(ellipse at 80% 80%,rgba(118,75,162,.06) 0%,transparent 50%),radial-gradient(ellipse at 50% 50%,rgba(99,102,241,.04) 0%,transparent 70%);pointer-events:none;z-index:0}
+a{color:var(--accent2);text-decoration:none;transition:.2s}
+a:hover{color:#c4b5fd;text-shadow:0 0 8px rgba(167,139,250,.4)}
+code{font-family:"Cascadia Code","Fira Code",monospace;font-size:.88em;background:rgba(99,102,241,.1);color:#c4b5fd;padding:2px 7px;border-radius:5px;border:1px solid rgba(99,102,241,.15)}
+pre{background:rgba(0,0,0,.4);border:1px solid var(--line);border-radius:12px;padding:16px 18px;overflow:auto;font-size:.85em;line-height:1.6;backdrop-filter:blur(10px)}
+pre code{background:none;border:none;padding:0;color:#a5b4fc}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:rgba(255,255,255,.03)}
+::-webkit-scrollbar-thumb{background:rgba(99,102,241,.3);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:rgba(99,102,241,.5)}
+
+.progress{position:fixed;top:0;left:0;height:3px;width:0;background:linear-gradient(90deg,#6366f1,#a78bfa,#ec4899);z-index:999;border-radius:0 3px 3px 0;box-shadow:0 0 12px rgba(99,102,241,.5)}
+.reveal{opacity:0;transform:translateY(24px);transition:opacity .6s cubic-bezier(.22,1,.36,1),transform .6s cubic-bezier(.22,1,.36,1)}
+.reveal.on{opacity:1;transform:translateY(0)}
+
+.sidebar{position:fixed;top:0;left:0;bottom:0;width:272px;background:var(--side);backdrop-filter:blur(20px);border-right:1px solid var(--line);z-index:100;overflow-y:auto;display:flex;flex-direction:column}
+.brand{display:flex;align-items:center;gap:12px;padding:20px 20px 16px;border-bottom:1px solid var(--line)}
+.brand-mark{width:38px;height:38px;border-radius:10px;background:var(--grad);display:flex;align-items:center;justify-content:center;flex:none;box-shadow:0 4px 16px rgba(99,102,241,.4)}
+.brand-mark svg{width:20px;height:20px}
+.brand-name{font-weight:700;font-size:15px;color:#fff}
+.brand-sub{font-size:11px;color:var(--muted)}
+.toc-title{padding:16px 20px 6px;font-size:10px;letter-spacing:3px;color:var(--muted);text-transform:uppercase}
+.toc{list-style:none;margin:0;padding:0 10px 16px;flex:1;overflow-y:auto}
+.toc li{margin:1px 0}
+.toc a{display:block;padding:6px 12px;border-radius:8px;color:#b0bac8;font-size:13px;line-height:1.35;border-left:2px solid transparent;transition:.2s}
+.toc a:hover{background:rgba(255,255,255,.05);color:#fff;padding-left:16px}
+.toc a.active{background:rgba(99,102,241,.12);color:#c4b5fd;border-left-color:var(--accent2);box-shadow:inset 0 0 20px rgba(99,102,241,.05)}
+.toc .l3{padding-left:24px;font-size:12px}
+.toc .l4{padding-left:36px;font-size:11px;color:var(--muted)}
+.side-foot{margin-top:auto;padding:16px 20px;font-size:11px;color:var(--muted);border-top:1px solid var(--line)}
+
+.main{margin-left:272px;position:relative;z-index:1}
+.hero{padding:44px 48px 30px;border-bottom:1px solid var(--line)}
+.hero-tags{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px}
+.tag{font-size:11px;color:#c4b5fd;background:rgba(99,102,241,.12);border:1px solid rgba(99,102,241,.25);padding:4px 12px;border-radius:20px;font-weight:500;letter-spacing:1px}
+.tag.hi{background:var(--grad);color:#fff;border:none;box-shadow:0 2px 12px rgba(99,102,241,.3)}
+.hero h1{margin:0 0 12px;font-size:28px;font-weight:800;line-height:1.3;background:linear-gradient(135deg,#fff 40%,#a5b4fc 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.hero-meta{color:var(--muted);font-size:13px;display:flex;flex-wrap:wrap;gap:8px 24px}
+.hero-meta b{color:#a5b4fc;font-weight:600}
+
+.dashboard{max-width:1020px;margin:0 auto;padding:20px 48px 0}
+.idx-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin:16px 0}
+.idx-card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;backdrop-filter:blur(12px);transition:.3s;animation:fadeUp .6s both;animation-delay:var(--d,0s);position:relative;overflow:hidden}
+.idx-card::before{content:"";position:absolute;top:0;left:0;right:0;height:2px;background:var(--grad);opacity:.6}
+.idx-card:hover{background:var(--panel2);border-color:rgba(99,102,241,.25);box-shadow:var(--glow);transform:translateY(-3px)}
+.idx-name{font-size:12px;color:var(--muted);margin-bottom:4px}
+.idx-pt{font-size:18px;font-weight:700;font-family:monospace;color:#fff}
+.idx-val{font-size:22px;font-weight:700;font-family:monospace}
+.idx-val.up{color:var(--up)}.idx-val.down{color:var(--down)}
+
+.dash-row{display:flex;justify-content:center;margin:16px 0}
+.dash-cell{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px;backdrop-filter:blur(12px)}
+.donut text{font-family:inherit}
+.donut-big{font-size:20px;font-weight:800}
+.donut-sm{font-size:11px;fill:var(--muted)}
+.donut-xs{font-size:10px}
+
+.sec-block{margin:14px 0;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;backdrop-filter:blur(12px)}
+.sec-t{font-size:12px;color:var(--muted);margin-bottom:8px;letter-spacing:2px}
+.hbar,.cchart{width:100%;height:auto;display:block}
+.hbar text,.cchart text{font-family:inherit}
+.cl{font-size:12px;fill:#8a94a6}
+.cv{font-size:12px;fill:#e8ecf1;font-weight:600}
+.cbar{transition:width .8s cubic-bezier(.22,1,.36,1)}
+
+.mgn-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:16px 0}
+.mgn-card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px;backdrop-filter:blur(12px)}
+.mgn-card .k{font-size:11px;color:var(--muted)}
+.mgn-card .v{font-size:18px;font-weight:700;font-family:monospace;color:#fff}
+.mgn-card .v.up{color:var(--up)}.mgn-card .v.down{color:var(--down)}
+
+.content{max-width:1020px;margin:0 auto;padding:28px 48px 40px}
+.content h2{font-size:20px;margin:36px 0 14px;padding:10px 16px;background:var(--panel);border:1px solid var(--line);border-radius:10px;border-left:3px solid var(--accent);backdrop-filter:blur(12px)}
+.content h3{font-size:16px;margin:22px 0 8px;padding-bottom:8px;border-bottom:1px solid var(--line);color:#c4b5fd}
+.content h4{font-size:14px;margin:16px 0 6px;color:var(--accent2)}
+.content h2[id^="risk"],.content h2[id^="sec-12"],.content h2[id^="sec-13"]{border-left-color:var(--up);background:rgba(239,68,68,.06)}
+p{margin:10px 0}
+ul,ol{margin:8px 0;padding-left:24px}
+li{margin:5px 0}
+li .kv-k{color:var(--muted);margin-right:8px;font-size:.95em}
+li .kv-v{font-weight:700;font-family:monospace;color:#fff}
+li .kv-v.up{color:var(--up)}.li .kv-v.down{color:var(--down)}
+
+.tw{overflow-x:auto;margin:14px 0;border:1px solid var(--line);border-radius:12px;backdrop-filter:blur(10px)}
+table{border-collapse:collapse;width:100%;font-size:13px;background:rgba(0,0,0,.2)}
+th{background:rgba(99,102,241,.08);color:#a5b4fc;text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);white-space:nowrap;font-weight:600;font-size:12px;letter-spacing:1px}
+td{padding:9px 14px;border-bottom:1px solid rgba(255,255,255,.03);white-space:nowrap}
+tbody tr:hover{background:rgba(99,102,241,.05)}
+tbody tr:last-child td{border-bottom:none}
+
+.tc{margin:14px 0 20px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;backdrop-filter:blur(12px)}
+.tc-t{font-size:11px;color:var(--muted);margin-bottom:8px;letter-spacing:2px}
+.gauge{width:100%;max-width:220px;height:auto;display:block;margin:0 auto}
+.gauge-val{font-size:22px;font-weight:800;font-family:monospace}
+.gauge-lbl{font-size:11px;fill:var(--muted)}
+
+blockquote{margin:16px 0;padding:16px 20px;background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.15);border-left:4px solid var(--warn);border-radius:0 12px 12px 0;color:#fde68a;backdrop-filter:blur(10px)}
+blockquote p{margin:6px 0}
+hr{border:none;height:1px;background:linear-gradient(90deg,transparent,var(--line),transparent);margin:24px 0}
+
+.foot{max-width:1020px;margin:0 auto;padding:20px 48px 50px;color:var(--muted);font-size:12px;border-top:1px solid var(--line);margin-top:20px}
+#top{position:fixed;right:24px;bottom:24px;width:48px;height:48px;border-radius:12px;border:1px solid var(--line);background:var(--panel);color:#fff;cursor:pointer;display:none;align-items:center;justify-content:center;box-shadow:0 4px 20px rgba(0,0,0,.4);backdrop-filter:blur(10px);transition:.2s;z-index:100}
+#top:hover{background:rgba(99,102,241,.15);border-color:var(--accent);box-shadow:var(--glow)}
+#top svg{width:20px;height:20px}
+
+@media(max-width:920px){
+.sidebar{position:static;width:auto;height:auto}
+.toc{display:flex;flex-wrap:nowrap;overflow-x:auto;gap:4px;padding:4px 12px 12px}
+.toc li{flex:none}.toc a{border-left:none;border-bottom:2px solid transparent;white-space:nowrap;border-radius:0}
+.toc a.active{border-bottom-color:var(--accent2)}
+.toc .l3,.toc .l4{padding-left:10px}.toc-title{display:none}.side-foot{display:none}
+.main{margin-left:0}.hero{padding:28px 20px}.hero h1{font-size:22px}
+.dashboard{padding:16px 16px 0}.content{padding:20px 16px}.foot{padding:16px 20px 30px}
+}
+@keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+@keyframes pulse{0%,100%{box-shadow:0 0 20px rgba(99,102,241,.1)}50%{box-shadow:0 0 40px rgba(99,102,241,.25)}}
+.idx-card:hover{animation:pulse 2s infinite}
+"""
+
+
+JS = r"""
+(()=> {
+  const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting)e.target.classList.add("on")})},{threshold:.08});
+  document.querySelectorAll(".reveal").forEach(el=>io.observe(el));
+  const links=[...document.querySelectorAll(".toc a")];
+  const map=new Map(links.map(a=>[a.getAttribute("href").slice(1),a]));
+  const sio=new IntersectionObserver(es=>{
+    let cur=null;for(const e of es){if(e.isIntersecting)cur=e.target}
+    if(cur){links.forEach(a=>a.classList.remove("active"));const m=map.get(cur.id);if(m)m.classList.add("active")}
+  },{rootMargin:"-10% 0px -80% 0px"});
+  document.querySelectorAll("h2[id],h3[id]").forEach(h=>sio.observe(h));
+  document.querySelectorAll(".cbar").forEach(r=>{
+    const w=r.dataset.w;if(w){requestAnimationFrame(()=>{setTimeout(()=>r.style.width=w+"px",200)})}
+  });
+  document.querySelectorAll(".idx-val[data-val]").forEach(el=>{
+    const target=parseFloat(el.dataset.val);const dur=800;const st=performance.now();
+    const step=(now)=>{const p=Math.min(1,(now-st)/dur);const v=target*p;
+      el.textContent=(v>=0?"+":"")+v.toFixed(2)+"%";if(p<1)requestAnimationFrame(step)};
+    requestAnimationFrame(step);
+  });
+  const bar=document.querySelector(".progress"),topBtn=document.querySelector("#top");
+  const onScroll=()=>{const h=document.documentElement;
+    if(bar)bar.style.width=(h.scrollTop/(h.scrollHeight-h.clientHeight)*100)+"%";
+    if(topBtn)topBtn.style.display=h.scrollTop>600?"flex":"none"};
+  window.addEventListener("scroll",onScroll,{passive:true});
+  if(topBtn)topBtn.addEventListener("click",()=>window.scrollTo({top:0,behavior:"smooth"}));
+  onScroll();
+})();
+"""
+
+_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg>'
+_ARROW = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>'
+
+
+def _toc_html(toc):
+    items = []
+    for lvl, t, anc in toc:
+        cls = "l" + str(lvl)
+        items.append(f'<li><a class="{cls}" href="#{anc}">{esc(t)}</a></li>')
+    return '<ul class="toc">' + "".join(items) + "</ul>"
+
+
+def build_html(text, path, title=None):
+    title = title or ext_title(text, path)
+    date = ext_date(path)
+    badges = ext_badges(text, path)
+    toc = ext_toc(text)
+    ctx = Ctx()
+    body = render_blocks(text.splitlines(), ctx)
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    dash = build_dashboard(text)
+    tag_html = "".join(
+        f'<span class="tag{" hi" if i == 0 else ""}">{esc(b)}</span>'
+        for i, b in enumerate(badges)
+    )
+    return f'''<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{esc(title)}</title><style>{CSS}</style></head><body>
+<div class="progress"></div>
+<aside class="sidebar"><div class="brand"><div class="brand-mark">{_ICON}</div>
+<div><div class="brand-name">超级研报</div><div class="brand-sub">Report Visualizer</div></div></div>
+<div class="toc-title">目录</div>{_toc_html(toc)}
+<div class="side-foot">生成于 {esc(now)}<br>不构成投资建议</div></aside>
+<main class="main"><header class="hero"><div class="hero-tags">{tag_html}</div>
+<h1>{esc(title)}</h1>
+<div class="hero-meta"><span>数据日期 <b>{esc(date)}</b></span><span>生成时间 <b>{esc(now)}</b></span><span>模块 <b>report-web</b></span></div>
+</header>
+{dash}
+<div class="content">
+{body}
+</div>
+<footer class="foot">本页面由 report-web 从 Markdown 研报自动生成。数据来源：同花顺问财 / 东方财富妙想。本报告不构成投资建议。</footer>
+</main>
+<button id="top" title="回到顶部">{_ARROW}</button>
+<script>{JS}</script></body></html>'''
+
+
+def main():
+    ap = argparse.ArgumentParser(description="炫酷网页版研报渲染器")
+    ap.add_argument("--input", "-i", required=True)
+    ap.add_argument("--output", "-o", required=True)
+    ap.add_argument("--title", default=None)
+    args = ap.parse_args()
+    with open(args.input, encoding="utf-8") as f:
+        text = f.read()
+    page = build_html(text, args.input, title=args.title)
+    with open(args.output, "w", encoding="utf-8") as f:
+        f.write(page)
+    print(f"written: {args.output} ({len(page)} chars)")
+
+
+if __name__ == "__main__":
+    main()
