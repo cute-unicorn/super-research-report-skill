@@ -51,7 +51,7 @@ $env:MX_APIKEY = "<你的妙想 API Key>"
 将本仓库克隆或复制到 Codex 技能根目录：
 
 ```powershell
-git clone https://github.com/cute-unicorn/超级研报skill.git
+git clone https://github.com/cute-unicorn/super-research-report-skill.git
 Copy-Item -LiteralPath "超级研报skill\daily-market-research" -Destination "$env:USERPROFILE\.codex\skills" -Recurse
 Copy-Item -LiteralPath "超级研报skill\stock-deep-research" -Destination "$env:USERPROFILE\.codex\skills" -Recurse
 ```
