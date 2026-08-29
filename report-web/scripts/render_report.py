@@ -467,8 +467,12 @@ def build_stock_dash(text):
     if rc: parts.append(rc)
     sm = _stock_metrics(d)
     if sm: parts.append(sm)
+    fb = _fin_bars(d)
+    if fb: parts.append(fb)
     pz = _price_zone(d)
     if pz: parts.append(pz)
+    ts = _tech_strip(d)
+    if ts: parts.append(ts)
     return '<div class="dashboard">' + "".join(parts) + "</div>" if parts else ""
 
 
@@ -519,11 +523,173 @@ def _r_inline_hl(t):
     return _hl_nums(r_inline(t))
 
 
+# ================ 更多数据提取 ================
+def ext_macro(text):
+    r = {}
+    for line in text.splitlines()[:120]:
+        for k, p in [
+            ("cpi", r"CPI.*?([+\-]?\d+\.?\d*)%"),
+            ("ppi", r"PPI.*?([+\-]?\d+\.?\d*)%"),
+            ("m2", r"M2.*?([+\-]?\d+\.?\d*)%"),
+            ("she", r"社融.*?([\d.]+)\s*(万亿|亿)"),
+            ("lpr", r"LPR.*?([\d.]+)%"),
+            ("usdcny", r"美元兑人民币.*?([\d.]+)"),
+        ]:
+            if k not in r:
+                m = re.search(p, line)
+                if m:
+                    try: r[k] = m.group(1)
+                    except: pass
+    return r
+
+def ext_overseas(text):
+    r = {}
+    for line in text.splitlines()[:150]:
+        for k, p in [
+            ("nasdaq", r"纳斯达克.*?([+\-]?\d+\.?\d*)%"),
+            ("dow", r"道琼斯.*?([+\-]?\d+\.?\d*)%"),
+            ("sp500", r"标普.*?([+\-]?\d+\.?\d*)%"),
+            ("hsi", r"恒生指数.*?([+\-]?\d+\.?\d*)%"),
+            ("gold", r"黄金.*?([+\-]?\d+\.?\d*)%"),
+            ("oil", r"原油.*?([+\-]?\d+\.?\d*)%"),
+            ("btc", r"比特币.*?([+\-]?\d+\.?\d*)%"),
+        ]:
+            if k not in r:
+                m = re.search(p, line)
+                if m:
+                    try: r[k] = float(m.group(1))
+                    except: pass
+    return r
+
+def ext_fundflow(text):
+    r = {}
+    for line in text.splitlines()[:200]:
+        m = re.search(r"主力.*?净流入.*?([+\-]?[\d.,]+)\s*(亿|万)", line)
+        if m and "main" not in r:
+            sign = -1 if m.group(1).startswith("-") else 1
+            r["main"] = sign * float(m.group(1).replace(",","").lstrip("+-")) * (1e8 if m.group(2)=="亿" else 1e4)
+        m = re.search(r"超大单.*?净流入.*?([+\-]?[\d.,]+)\s*(亿|万)", line)
+        if m and "xl" not in r:
+            sign = -1 if m.group(1).startswith("-") else 1
+            r["xl"] = sign * float(m.group(1).replace(",","").lstrip("+-")) * (1e8 if m.group(2)=="亿" else 1e4)
+    return r
+
+def ext_margin_trend(text):
+    """提取两融历史数据点用于折线图"""
+    points = []
+    for line in text.splitlines():
+        m = re.search(r"(\d{2}-\d{2})[（(]?\S*[）)]?\s*\|?\s*([\d.]+)\s*亿\s*\|?\s*([\d.]+)\s*万亿", line)
+        if m:
+            try:
+                points.append({"date": m.group(1), "sec": float(m.group(2)), "fin": float(m.group(3))})
+            except: pass
+    return points
+
+def _margin_line_chart(points):
+    """两融余额折线图（带面积填充）"""
+    if len(points) < 2: return ""
+    w, h = 480, 180
+    pad_l, pad_r, pad_t, pad_b = 50, 20, 20, 30
+    fin_vals = [p["fin"] for p in points]
+    sec_vals = [p["sec"] for p in points]
+    all_vals = fin_vals + sec_vals
+    vmin, vmax = min(all_vals) * 0.95, max(all_vals) * 1.05
+    vrng = vmax - vmin or 1
+    def x(i): return pad_l + (w - pad_l - pad_r) * i / (len(points) - 1)
+    def y(v): return pad_t + (h - pad_t - pad_b) * (1 - (v - vmin) / vrng)
+    fin_pts = " ".join(f"{x(i):.1f},{y(p['fin']):.1f}" for i, p in enumerate(points))
+    sec_pts = " ".join(f"{x(i):.1f},{y(p['sec']):.1f}" for i, p in enumerate(points))
+    area = f"M {x(0):.1f},{y(fin_vals[0]):.1f} " + " ".join(f"L {x(i):.1f},{y(p['fin']):.1f}" for i, p in enumerate(points)) + f" L {x(len(points)-1):.1f},{h-pad_b} L {x(0):.1f},{h-pad_b} Z"
+    dots = "".join(f'<circle cx="{x(i):.1f}" cy="{y(p["fin"]):.1f}" r="4" fill="#6366f1" stroke="#0a0e1a" stroke-width="2"/>' for i, p in enumerate(points))
+    labels = "".join(f'<text class="ax-lbl" x="{x(i):.1f}" y="{h-8}" text-anchor="middle">{p["date"]}</text>' for i, p in enumerate(points))
+    ylabels = "".join(f'<text class="ax-lbl" x="{pad_l-6}" y="{y(v)+4:.1f}" text-anchor="end">{v:.1f}万亿</text>' for v in [vmin + vrng*0.25, vmin + vrng*0.5, vmin + vrng*0.75, vmax])
+    return f'''<div class="ml-wrap reveal on"><div class="ml-title">两融余额走势</div>
+<svg class="mlchart" viewBox="0 0 {w} {h}">
+<defs><linearGradient id="mlg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#6366f1" stop-opacity=".3"/><stop offset="100%" stop-color="#6366f1" stop-opacity="0"/></linearGradient></defs>
+<path d="{area}" fill="url(#mlg)"/>
+<polyline class="ml-line" points="{fin_pts}" fill="none" stroke="#6366f1" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="{sec_pts}" fill="none" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="4 3" opacity=".6"/>
+{dots}{labels}{ylabels}
+</svg>
+<div class="ml-legend"><span class="ml-dot" style="background:#6366f1"></span>融资余额 <span class="ml-dot" style="background:#f59e0b"></span>融券余额</div>
+</div>'''
+
+
+def _macro_chips(data):
+    if not data: return ""
+    labels = {"cpi":"CPI","ppi":"PPI","m2":"M2","she":"社融","lpr":"LPR","usdcny":"USDCNY"}
+    chips = []
+    for k, lbl in labels.items():
+        if k in data:
+            v = data[k]
+            chips.append(f'<div class="mc-chip"><span class="mc-k">{lbl}</span><span class="mc-v">{esc(str(v))}</span></div>')
+    return f'<div class="mc-wrap"><div class="mc-title">宏观指标</div><div class="mc-grid">{"".join(chips)}</div></div>'
+
+
+def _overseas_bars(data):
+    if not data: return ""
+    labels = {"nasdaq":"纳斯达克","dow":"道琼斯","sp500":"标普500","hsi":"恒生指数","gold":"黄金","oil":"原油","btc":"比特币"}
+    items = [(labels[k], v) for k, v in data.items() if v is not None]
+    if not items: return ""
+    bars = []
+    mx = max(abs(v) for _, v in items) or 1
+    for name, v in items:
+        pct = abs(v) / mx * 100
+        col = "#ef4444" if v >= 0 else "#22c55e"
+        bars.append(f'''<div class="ob-row"><span class="ob-n">{name}</span>
+<div class="ob-track"><div class="ob-fill" style="width:{pct:.0f}%;background:{col}"></div></div>
+<span class="ob-v" style="color:{col}">{v:+.2f}%</span></div>''')
+    return f'<div class="ob-wrap"><div class="ob-title">海外市场</div>{"".join(bars)}</div>'
+
+
+def _fin_bars(d):
+    """个股财务指标进度条"""
+    bars = []
+    metrics = [
+        ("毛利率", d.get("margin"), 100, "%"),
+        ("ROE", d.get("roe"), 30, "%"),
+        ("负债率", d.get("debt"), 100, "%"),
+        ("获利盘", d.get("chip_pct"), 100, "%"),
+    ]
+    for lbl, val, mx, unit in metrics:
+        if val is None: continue
+        pct = min(100, abs(val) / mx * 100)
+        col = "#6366f1" if val >= 0 else "#22c55e"
+        bars.append(f'''<div class="fb-row"><span class="fb-k">{lbl}</span>
+<div class="fb-track"><div class="fb-fill" style="width:{pct:.0f}%;background:linear-gradient(90deg,{col}44,{col})"></div></div>
+<span class="fb-v">{val:+.1f}{unit}</span></div>''')
+    return f'<div class="fb-wrap"><div class="fb-title">财务概览</div>{"".join(bars)}</div>' if bars else ""
+
+
+def _tech_strip(d):
+    """技术信号指示器"""
+    price = d.get("price"); ma20 = d.get("ma20"); ma60 = d.get("ma60"); rsi = d.get("rsi")
+    if price is None: return ""
+    signals = []
+    if ma20:
+        above = price > ma20
+        signals.append(("MA20", "上方" if above else "下方", "#ef4444" if above else "#22c55e"))
+    if ma60:
+        above = price > ma60
+        signals.append(("MA60", "上方" if above else "下方", "#ef4444" if above else "#22c55e"))
+    if rsi:
+        if rsi > 70: sig, col = "超买", "#ef4444"
+        elif rsi < 30: sig, col = "超卖", "#22c55e"
+        else: sig, col = "中性", "#f59e0b"
+        signals.append(("RSI", f"{rsi:.0f} {sig}", col))
+    if not signals: return ""
+    pills = "".join(f'<div class="ts-pill" style="border-color:{col}33"><span class="ts-k">{k}</span><span class="ts-v" style="color:{col}">{v}</span></div>' for k, v, col in signals)
+    return f'<div class="ts-wrap"><div class="ts-title">技术信号</div><div class="ts-grid">{pills}</div></div>'
+
+
 def build_daily_dash(text):
     idx = ext_idx(text)
     brd = ext_brd(text)
     sec = ext_sec(text)
     mgn = ext_mgn(text)
+    macro = ext_macro(text)
+    ovs = ext_overseas(text)
+    mline_pts = ext_margin_trend(text)
     parts = []
     if idx: parts.append(_index_cards(idx))
     sg = _sentiment_gauge(brd["up"], brd["down"])
@@ -534,13 +700,16 @@ def build_daily_dash(text):
         if sg: cells += f'<div class="dash-cell">{sg}</div>'
         if cells: parts.append(f'<div class="dash-row">{cells}</div>')
     if sec: parts.append(_heatmap(sec))
-    up_sectors = [(s["n"], s["v"]) for s in sec if s["v"] > 0][:8]
-    down_sectors = [(s["n"], s["v"]) for s in sec if s["v"] < 0][:8]
-    if up_sectors:
-        parts.append(f'<div class="sec-block"><div class="sec-t">领涨板块</div>{_hbar(up_sectors)}</div>')
-    if down_sectors:
-        parts.append(f'<div class="sec-block"><div class="sec-t">领跌板块</div>{_hbar(down_sectors)}</div>')
+    ml = _margin_line_chart(mline_pts)
+    if ml: parts.append(ml)
     if mgn["bal"] or mgn["net"]: parts.append(_mgn_cards(mgn))
+    mc = _macro_chips(macro)
+    ob = _overseas_bars(ovs)
+    if mc or ob:
+        row = ""
+        if mc: row += mc
+        if ob: row += ob
+        parts.append(f'<div class="dash-two">{row}</div>')
     if not parts: return ""
     return '<div class="dashboard">' + "".join(parts) + "</div>"
 
@@ -722,6 +891,33 @@ hr{border:none;height:1px;background:linear-gradient(90deg,transparent,var(--lin
 .sm-v{font-size:22px !important}
 .content li .kv-v{font-size:1.1em !important;padding:1px 4px;border-radius:4px;background:rgba(255,255,255,.03)}
 .content .num{padding:1px 3px;border-radius:4px;background:rgba(99,102,241,.08)}
+.dash-two{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0}
+.mc-wrap,.ob-wrap,.ml-wrap,.fb-wrap,.ts-wrap{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;backdrop-filter:blur(12px);margin:10px 0}
+.mc-title,.ob-title,.ml-title,.fb-title,.ts-title{font-size:11px;color:var(--muted);letter-spacing:2px;margin-bottom:12px;text-transform:uppercase}
+.mc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:8px}
+.mc-chip{background:rgba(99,102,241,.06);border:1px solid rgba(99,102,241,.12);border-radius:8px;padding:8px 10px;text-align:center}
+.mc-k{display:block;font-size:10px;color:var(--muted);margin-bottom:2px}
+.mc-v{display:block;font-size:15px;font-weight:700;font-family:monospace;color:#a5b4fc}
+.ob-row{display:flex;align-items:center;gap:10px;margin:6px 0}
+.ob-n{width:60px;font-size:12px;color:var(--muted);flex:none}
+.ob-track{flex:1;height:8px;background:rgba(255,255,255,.04);border-radius:4px;overflow:hidden}
+.ob-fill{height:100%;border-radius:4px;transition:width .8s cubic-bezier(.22,1,.36,1)}
+.ob-v{width:60px;text-align:right;font-size:13px;font-family:monospace;font-weight:600;flex:none}
+.mlchart{width:100%;height:auto;display:block}
+.ml-line{filter:drop-shadow(0 0 6px rgba(99,102,241,.4))}
+.ml-legend{display:flex;gap:16px;align-items:center;font-size:11px;color:var(--muted);margin-top:8px}
+.ml-dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px;vertical-align:middle}
+.ax-lbl{font-size:9px;fill:var(--muted);font-family:monospace}
+.fb-row{display:flex;align-items:center;gap:12px;margin:8px 0}
+.fb-k{width:56px;font-size:12px;color:var(--muted);flex:none}
+.fb-track{flex:1;height:10px;background:rgba(255,255,255,.04);border-radius:5px;overflow:hidden}
+.fb-fill{height:100%;border-radius:5px;transition:width .8s cubic-bezier(.22,1,.36,1)}
+.fb-v{width:64px;text-align:right;font-size:14px;font-family:monospace;font-weight:600;color:#a5b4fc;flex:none}
+.ts-grid{display:flex;flex-wrap:wrap;gap:8px}
+.ts-pill{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 14px;display:flex;align-items:center;gap:8px}
+.ts-k{font-size:11px;color:var(--muted)}
+.ts-v{font-size:14px;font-weight:700;font-family:monospace}
+@media(max-width:768px){.dash-two{grid-template-columns:1fr}}
 """
 
 
