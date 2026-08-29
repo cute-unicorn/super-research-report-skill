@@ -1,0 +1,5 @@
+interface:
+  display_name: "每日市场研报"
+  short_description: "生成每日市场研报与深度标的策略"
+  default_prompt: "使用 $daily-market-research 生成今日两份市场研报"
+
