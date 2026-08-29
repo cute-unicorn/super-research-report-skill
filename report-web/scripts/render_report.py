@@ -143,7 +143,7 @@ def _li_kv(t):
         k = r_inline(m.group(1).strip()); v = r_inline(m.group(2).strip())
         c = _vcls(_pnum(m.group(2)))
         return f'<span class="kv-k">{k}</span><span class="kv-v {c}">{v}</span>'
-    return r_inline(t)
+    return _r_inline_hl(t)
 
 def _split_row(l):
     l = l.strip()
@@ -185,7 +185,7 @@ def render_blocks(lines, ctx, top=True):
             out.append("<ol>" + "".join(f"<li>{_li_kv(it)}</li>" for it in items) + "</ol>"); continue
         buf = [line]; i += 1
         while i < n and lines[i].strip() and not _break(lines[i]): buf.append(lines[i].rstrip("\n")); i += 1
-        out.append("<p>" + r_inline(" ".join(x.strip() for x in buf if x.strip())) + "</p>")
+        out.append("<p>" + _r_inline_hl(" ".join(x.strip() for x in buf if x.strip())) + "</p>")
     return "\n".join(out)
 
 
@@ -395,7 +395,17 @@ def _stock_metrics(d):
     if not items: return ""
     cards = []
     for i, (k, v, c) in enumerate(items):
-        cards.append(f'<div class="sm-card" style="--d:{i*0.06}s"><div class="sm-k">{esc(k)}</div><div class="sm-v {c}">{esc(v)}</div></div>')
+        ring = ""
+        num = None
+        try: num = float(re.search(r'[+\-]?[\d.]+', v).group())
+        except: pass
+        if num is not None and ("%" in v):
+            pct = min(100, abs(num))
+            rcol = "#ef4444" if (c == "up" or (c == "" and num > 50)) else ("#22c55e" if c == "down" else "#6366f1")
+            ring = _ring(pct, 40, rcol)
+            cards.append(f'<div class="sm-card has-ring" style="--d:{i*0.06}s"><div class="sm-ring">{ring}</div><div class="sm-body"><div class="sm-k">{esc(k)}</div><div class="sm-v {c}">{esc(v)}</div></div></div>')
+        else:
+            cards.append(f'<div class="sm-card" style="--d:{i*0.06}s"><div class="sm-k">{esc(k)}</div><div class="sm-v {c}">{esc(v)}</div></div>')
     return '<div class="sm-grid">' + "".join(cards) + "</div>"
 
 
@@ -462,6 +472,53 @@ def build_stock_dash(text):
     return '<div class="dashboard">' + "".join(parts) + "</div>" if parts else ""
 
 
+# ================ 增强可视化 ================
+def _ring(pct, size=44, color="#6366f1", stroke=4):
+    import math
+    pct = max(0, min(100, pct))
+    r = (size - stroke) / 2
+    c = size / 2
+    circ = 2 * math.pi * r
+    offset = circ * (1 - pct / 100)
+    return (f'<svg class="mring" width="{size}" height="{size}" viewBox="0 0 {size} {size}">'
+        f'<circle cx="{c}" cy="{c}" r="{r}" fill="none" stroke="rgba(255,255,255,.06)" stroke-width="{stroke}"/>'
+        f'<circle cx="{c}" cy="{c}" r="{r}" fill="none" stroke="{color}" stroke-width="{stroke}" '
+        f'stroke-dasharray="{circ:.1f}" stroke-dashoffset="{offset:.1f}" stroke-linecap="round" '
+        f'transform="rotate(-90 {c} {c})"/></svg>')
+
+
+def _heatmap(sectors):
+    if not sectors: return ""
+    tiles = []
+    for s in sectors:
+        v = s["v"]
+        inten = min(1, abs(v) / 8)
+        if v >= 0:
+            bg = f"rgba(239,68,68,{0.08 + inten * 0.45:.2f})"
+            tc = "#fca5a5"
+        else:
+            bg = f"rgba(34,197,94,{0.08 + inten * 0.45:.2f})"
+            tc = "#86efac"
+        tiles.append(
+            f'<div class="hm-tile" style="background:{bg}">'
+            f'<span class="hm-n">{esc(s["n"])}</span>'
+            f'<span class="hm-v" style="color:{tc}">{v:+.2f}%</span></div>'
+        )
+    return f'<div class="hm-wrap"><div class="hm-title">板块热力图</div><div class="hm-grid">{"".join(tiles)}</div></div>'
+
+
+_HL_NUM = re.compile(
+    r'(?<!["/>=])([+\-]?[\d,]+\.?\d*\s*(?:%|万亿|亿|万|元|倍|点|家))(?!["</])'
+)
+
+def _hl_nums(html_text):
+    return _HL_NUM.sub(r'<span class="num">\1</span>', html_text)
+
+
+def _r_inline_hl(t):
+    return _hl_nums(r_inline(t))
+
+
 def build_daily_dash(text):
     idx = ext_idx(text)
     brd = ext_brd(text)
@@ -476,6 +533,7 @@ def build_daily_dash(text):
         if dn: cells += f'<div class="dash-cell">{dn}</div>'
         if sg: cells += f'<div class="dash-cell">{sg}</div>'
         if cells: parts.append(f'<div class="dash-row">{cells}</div>')
+    if sec: parts.append(_heatmap(sec))
     up_sectors = [(s["n"], s["v"]) for s in sec if s["v"] > 0][:8]
     down_sectors = [(s["n"], s["v"]) for s in sec if s["v"] < 0][:8]
     if up_sectors:
@@ -646,6 +704,24 @@ hr{border:none;height:1px;background:linear-gradient(90deg,transparent,var(--lin
 .content h2::after{content:"";position:absolute;bottom:0;left:0;right:0;height:1px;background:linear-gradient(90deg,rgba(99,102,241,.4),transparent 70%)}
 .content strong{color:#c4b5fd;font-weight:700}
 .content h2 + p, .content h2 + ul {margin-top:12px}
+.hm-wrap{margin:14px 0;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;backdrop-filter:blur(12px)}
+.hm-title{font-size:11px;color:var(--muted);letter-spacing:2px;margin-bottom:10px;text-transform:uppercase}
+.hm-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:6px}
+.hm-tile{border-radius:8px;padding:10px 8px;text-align:center;transition:.2s;cursor:default;border:1px solid transparent}
+.hm-tile:hover{transform:scale(1.04);border-color:rgba(255,255,255,.1)}
+.hm-n{display:block;font-size:11px;color:#b0bac8;margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hm-v{display:block;font-size:14px;font-weight:700;font-family:monospace}
+.num{font-family:monospace;font-weight:700;color:#a5b4fc;font-size:1.05em;text-shadow:0 0 10px rgba(165,180,252,.15)}
+.sm-card.has-ring{display:flex;align-items:center;gap:10px}
+.sm-ring{flex:none}
+.sm-body{flex:1;min-width:0}
+.mring{display:block}
+.idx-val{font-size:26px !important;font-weight:800 !important;text-shadow:0 0 20px rgba(255,255,255,.08)}
+.idx-card .idx-name{font-size:11px;letter-spacing:1px;text-transform:uppercase}
+.idx-card .idx-pt{font-size:16px;font-family:monospace;color:#a5b4fc;font-weight:600}
+.sm-v{font-size:22px !important}
+.content li .kv-v{font-size:1.1em !important;padding:1px 4px;border-radius:4px;background:rgba(255,255,255,.03)}
+.content .num{padding:1px 3px;border-radius:4px;background:rgba(99,102,241,.08)}
 """
 
 
