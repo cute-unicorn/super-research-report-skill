@@ -1,21 +1,33 @@
-MIT License
+# 许可协议（保留所有权利）
+
+超级研报skill（本仓库及其全部内容，下称“本项目”）
 
 Copyright (c) 2026 cute-unicorn
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+本项目保留所有权利（All Rights Reserved）。
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+## 允许的使用
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+在遵守下列条款的前提下，任何人均可：
+
+1. 查看、学习、复制本项目源码；
+2. 对本项目进行二次开发（fork、修改、衍生、再分发）；
+3. 将本项目或衍生作品用于个人、教育或商业用途。
+
+## 必须遵守的条款
+
+1. 署名与出处：任何复制、修改、衍生或再分发，必须在衍生作品、README 或文档中明确保留原作者的版权声明，并注明原始出处与本项目链接 https://github.com/cute-unicorn/super-research-report-skill 及原作者（cute-unicorn）。
+2. 未经原作者书面许可，不得以原作者名义宣传、背书或推广衍生作品。
+3. 未经原作者书面许可，不得移除或篡改本版权声明。
+
+## 责任与保证
+
+本项目按“现状”（AS IS）提供，作者不对其正确性、适用性、完整性作任何明示或默示保证，不承担因使用本项目或其衍生作品产生的任何直接、间接、附带或后果性损失。
+
+## 其他权利保留
+
+除本协议明确授予的权利外，原作者保留与本项目相关的一切其他权利，包括但不限于署名权、商标权与追责权利。违反本协议条款的复制、再分发或使用行为，原作者保留追究责任的权利。
+
+---
+
+本协议不影响他人依照法律享有的权利（如合理引用、学习与研究）。

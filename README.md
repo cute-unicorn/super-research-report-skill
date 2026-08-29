@@ -240,4 +240,4 @@ powershell -ExecutionPolicy Bypass -File "<技能目录>\daily-market-research\s
 
 ## 许可
 
-[MIT](LICENSE)
+本项目保留所有权利（All Rights Reserved）：允许查看、复制与二次开发，但任何衍生或再分发必须保留版权声明，并注明原始出处与原作者（cute-unicorn）。详见 [LICENSE](LICENSE)。
