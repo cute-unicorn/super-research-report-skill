@@ -22,6 +22,7 @@
 - 风控纪律：每只个股与板块都给出止损、止盈与风险提示；目标价与止损均为示例参数。
 - 可接入定时自动化：配合 Codex 定时任务，每日自动产出并保存研报。
 - 可选网页可视化：将研报渲染为玻璃拟态风格的自包含 HTML 页面（零依赖，双击打开）。
+- 三级数据兜底：问财 → 自动重试 → 东方财富妙想选股，关键数据缺失时拒绝生成报告。
 
 ## 目录结构
 
@@ -32,8 +33,11 @@
 │   ├── agents/openai.yaml           # 技能界面配置
 │   ├── references/report_spec.md    # 基础版 + 深度版研报规范
 │   └── scripts/
-│       ├── fetch_daily_data.ps1     # 同花顺问财数据抓取
-│       └── fetch_miaoxiang_data.ps1 # 东方财富妙想数据抓取
+│       ├── fetch_daily_data.ps1     # 同花顺问财数据抓取（含重试/兜底/校验）
+│       ├── fetch_miaoxiang_data.ps1 # 东方财富妙想数据抓取
+│       ├── mx_to_iwencai.py         # 妙想结果 → 问财同构结构转换器
+│       ├── lib/common.ps1           # 共享工具函数
+│       └── tests/                   # 自测（17 项断言）
 └── stock-deep-research/             # 个股机构级深度研报技能
     ├── SKILL.md
     ├── references/report_spec.md
@@ -42,6 +46,16 @@
     ├── SKILL.md
     └── scripts/render_report.py     # Markdown → 炫酷 HTML（零依赖）
 ```
+
+## 自测
+
+修改抓取脚本后运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "daily-market-research\scripts\tests\test_common.ps1"
+```
+
+覆盖交易日回退、JSON 解析、妙想转换器、兜底链路（强制问财失败 → 妙想补数）与校验门禁。
 
 ## 工作流概览
 
@@ -125,6 +139,26 @@ powershell -ExecutionPolicy Bypass -File "<技能目录>\daily-market-research\s
 ```text
 每天早上 07:00 使用 daily-market-research 技能，生成今日两份市场研报，保存到 D:\codex\研报
 ```
+
+### 数据可靠性（可选）
+
+抓取脚本支持自动重试、妙想兜底和完整性校验：
+
+```powershell
+# -Strict: 关键数据缺失时直接中止，避免生成残缺报告
+powershell -ExecutionPolicy Bypass -File "daily-market-research\scripts\fetch_daily_data.ps1" -Workspace "D:\codex\研报" -Strict
+```
+
+脚本末尾会输出摘要：
+
+```text
+===== FETCH SUMMARY =====
+Fallbacks used: none
+Empty critical: none
+Other empty: none
+```
+
+`Empty critical` 非 `none` 时说明核心数据缺失，此时不应生成研报。
 
 ### 网页可视化（可选）
 

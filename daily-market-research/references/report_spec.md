@@ -151,6 +151,7 @@
 - `scan_limit_up_stocks.json`：当日涨停股票
 - `scan_ratings_today.json`：当日买入评级
 - `industry_top.json` / `industry_bottom.json`：行业涨跌幅排名
+- `industry_dynamic_top.json`：由当日领涨行业动态生成的板块估值（替代固定板块名单）
 - `gold_stocks.json`：券商金股
 - `news_domestic.json` / `news_global.json`：国内外政策和催化
 - `margin_level.json` / `margin_flow.json` / `margin_change.json`：两融水平、净买入/买入额、环比（市场合计口径）
@@ -158,6 +159,12 @@
 - `mx_data_margin.log`：妙想两融近5日趋势备用数据
 - `fundflow_market.json` / `fundflow_industry_top.json` / `fundflow_industry_bottom.json`：资金结构数据
 - `mx_data_sentiment.log` / `mx_data_fundflow.log`：妙想情绪和资金结构备用数据
+
+数据完整性要求：
+
+- 抓取脚本末尾会输出 `FETCH SUMMARY`，其中 `Empty critical` 必须为 `none`，否则不得生成研报。
+- 若 `Fallbacks used` 非空，说明该文件由妙想选股兜底生成（`"source": "mx-xuangu"`），报告中必须标注数据来源为东方财富妙想。
+- 实际数据日期以 JSON 字段中的 `[YYYYMMDD]` 为准；脚本会自动跳过周末。
 
 ## 三、常用补充查询
 

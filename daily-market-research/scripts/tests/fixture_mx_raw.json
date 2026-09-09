@@ -1,0 +1,35 @@
+{
+  "success": true,
+  "requestId": "fixture-request",
+  "data": {
+    "data": {
+      "protocolType": "SELECT_STOCK",
+      "securityCount": 2,
+      "allResults": {
+        "result": {
+          "columns": [
+            { "title": "代码", "key": "SECURITY_CODE", "dateMsg": null },
+            { "title": "名称", "key": "SECURITY_SHORT_NAME", "dateMsg": null },
+            { "title": "最新价(元)", "key": "NEWEST_PRICE", "dateMsg": "2026.09.04" },
+            { "title": "涨跌幅(%)", "key": "CHG", "dateMsg": "2026.09.04" }
+          ],
+          "dataList": [
+            {
+              "SECURITY_CODE": "600000",
+              "SECURITY_SHORT_NAME": "测试股份A",
+              "NEWEST_PRICE": "10.50",
+              "CHG": "5.20"
+            },
+            {
+              "SECURITY_CODE": "000001",
+              "SECURITY_SHORT_NAME": "测试股份B",
+              "NEWEST_PRICE": "--",
+              "CHG": "-1.30"
+            }
+          ],
+          "total": 2
+        }
+      }
+    }
+  }
+}

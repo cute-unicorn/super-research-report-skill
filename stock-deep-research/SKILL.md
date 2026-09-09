@@ -29,8 +29,10 @@ description: 生成单只 A 股个股的机构级深度研报：基础五维度�
 
 2. 抓取个股与产业数据。
    - 运行：`powershell -ExecutionPolicy Bypass -File "<技能目录>\scripts\fetch_stock_data.ps1" -Workspace "D:\codex\研报" -StockNames "公司A 公司B"`
+   - 建议加 `-Strict`：个股关键数据缺失时直接中止。
    - 脚本将行情/估值/财务/资金/技术/筹码/评级/新闻/公告/研报保存到 `<Workspace>\data\<date>\` 与 `<Workspace>\data\<date>\mx\`。
-   - 若 Iwencai 配额不足或数据缺失，用 `mx-data` / `mx-search` 补查，结果标注“数据来源：东方财富妙想”。
+   - **自动重试**：每条查询失败时自动加 `--call-type retry` 重试一次。
+   - **妙想兜底**：无论是否失败，脚本都会调用 `mx-data` / `mx-search` 写入 `<date>\mx\`，用于补查缺失字段与交叉验证；结果标注“数据来源：东方财富妙想”。
 
 3. 阅读原始数据并补产业/政策研究。
    - 优先读取脚本生成的 JSON/日志。
@@ -46,6 +48,7 @@ description: 生成单只 A 股个股的机构级深度研报：基础五维度�
    - 报告开头必须给出客观评级和评级理由。
 
 6. 验证。
+   - 先检查抓取脚本末尾的 `STOCK FETCH SUMMARY`：`Empty critical` 必须为 `none`，否则不得生成研报。
    - 文件存在且包含全部章节。
    - 评级框、核心判断、五维度、产业链、政策链、α 观点、情景推演、风险提示齐全。
    - 每个数据标注日期和来源；未取到的字段写“未取到”，禁止编造。
