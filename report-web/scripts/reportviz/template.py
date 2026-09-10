@@ -42,7 +42,8 @@ def build_html(text, path, title=None):
     )
     return f'''<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{esc(title)}</title><style>{CSS}</style></head><body>
+<title>{esc(title)}</title><style>{CSS}</style>
+<script>document.documentElement.classList.add("js");</script></head><body>
 <div class="progress"></div>
 <aside class="sidebar"><div class="brand"><div class="brand-mark">{_ICON}</div>
 <div><div class="brand-name">超级研报</div><div class="brand-sub">Report Visualizer</div></div></div>

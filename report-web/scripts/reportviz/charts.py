@@ -69,10 +69,13 @@ def _hbar(items, color_up="#ef4444", color_down="#22c55e"):
 def _index_cards(indices):
     if not indices: return ""
     cards = []
+    # 每个指数一套独立强调色，避免整屏同色
+    accents = ["#22d3ee", "#a78bfa", "#fbbf24", "#f472b6", "#34d399"]
     for i, ix in enumerate(indices):
         cls = vcls(ix["v"])
         pt = ix.get("p", "")
-        cards.append(f'''<div class="idx-card" style="--d:{i*0.08}s">
+        acc = accents[i % len(accents)]
+        cards.append(f'''<div class="idx-card" style="--d:{i*0.08}s;--acc:{acc}">
 <div class="idx-name">{esc(ix["n"])}</div>
 <div class="idx-pt">{esc(pt) if pt else "&nbsp;"}</div>
 <div class="idx-val {cls}" data-val="{ix["v"]:+.2f}">{ix["v"]:+.2f}%</div>
@@ -148,24 +151,160 @@ def _ring(pct, size=44, color="#6366f1", stroke=4):
         f'transform="rotate(-90 {c} {c})"/></svg>')
 
 
+# 涨跌配色：中国习惯红涨绿跌。用高饱和 HSL 让深浅区分更鲜明
+GAIN_HUE = 354
+LOSS_HUE = 158
+
+
+def _flow_color(v, strong=True):
+    """按数值正负与强度返回鲜明色。"""
+    hue = GAIN_HUE if v >= 0 else LOSS_HUE
+    return f"hsl({hue}, 92%, 58%)" if strong else f"hsl({hue}, 80%, 46%)"
+
+
+def _heat_tone(v, maxabs=8.0):
+    """热力图色阶：亮度随幅度变化，返回 (背景, 数值色, 左边框色)。"""
+    inten = min(1.0, abs(v) / maxabs) if maxabs else 0
+    if v >= 0:
+        light = 26 + inten * 30
+        return (f"hsl({GAIN_HUE}, 78%, {light:.0f}%)",
+                f"hsl({GAIN_HUE}, 100%, {min(light + 26, 88):.0f}%)",
+                f"hsl({GAIN_HUE}, 95%, 62%)")
+    light = 24 + inten * 28
+    return (f"hsl({LOSS_HUE}, 72%, {light:.0f}%)",
+            f"hsl({LOSS_HUE}, 95%, {min(light + 28, 86):.0f}%)",
+            f"hsl({LOSS_HUE}, 90%, 58%)")
+
+
 def _heatmap(sectors):
     if not sectors: return ""
+    maxabs = max((abs(s["v"]) for s in sectors), default=8.0) or 8.0
     tiles = []
     for s in sectors:
         v = s["v"]
-        inten = min(1, abs(v) / 8)
-        if v >= 0:
-            bg = f"rgba(239,68,68,{0.08 + inten * 0.45:.2f})"
-            tc = "#fca5a5"
-        else:
-            bg = f"rgba(34,197,94,{0.08 + inten * 0.45:.2f})"
-            tc = "#86efac"
+        bg, tc, edge = _heat_tone(v, maxabs)
         tiles.append(
-            f'<div class="hm-tile" style="background:{bg}">'
+            f'<div class="hm-tile" style="background:{bg};border-left:3px solid {edge}">'
             f'<span class="hm-n">{esc(s["n"])}</span>'
             f'<span class="hm-v" style="color:{tc}">{v:+.2f}%</span></div>'
         )
     return f'<div class="hm-wrap"><div class="hm-title">板块热力图</div><div class="hm-grid">{"".join(tiles)}</div></div>'
+
+
+def _key_points(idx, brd, sec, mgn, flow):
+    """首屏要点横幅：把当日最该被看到的 4-5 个数拎出来。"""
+    cards = []
+    if sec:
+        top = max(sec, key=lambda s: s["v"])
+        bot = min(sec, key=lambda s: s["v"])
+        cards.append(("领涨行业", top["n"], f'{top["v"]:+.2f}%', "gain"))
+        cards.append(("领跌行业", bot["n"], f'{bot["v"]:+.2f}%', "loss"))
+    if brd.get("up") is not None and brd.get("down") is not None:
+        total = brd["up"] + brd["down"]
+        ratio = brd["up"] / total * 100 if total else 0
+        tone = "gain" if ratio >= 50 else "loss"
+        cards.append(("涨跌家数", f'{brd["up"]} / {brd["down"]}', f"上涨占比 {ratio:.0f}%", tone))
+    if brd.get("lu") is not None and brd.get("ld") is not None:
+        tone = "gain" if brd["lu"] >= brd["ld"] * 3 else "loss"
+        cards.append(("涨停 / 跌停", f'{brd["lu"]} / {brd["ld"]}', "情绪强度", tone))
+    if flow.get("main") is not None:
+        v = flow["main"] / 1e8
+        cards.append(("主力资金", f"{v:+,.0f}亿", "净流入" if v >= 0 else "净流出",
+                      "gain" if v >= 0 else "loss"))
+    if mgn.get("bal"):
+        cards.append(("两融余额", f'{mgn["bal"]/1e12:.2f}万亿', "杠杆水平", "neutral"))
+    if not cards:
+        return ""
+    html = "".join(
+        f'<div class="kp-card kp-{tone}"><span class="kp-k">{esc(k)}</span>'
+        f'<span class="kp-v">{esc(v)}</span><span class="kp-sub">{esc(sub)}</span></div>'
+        for k, v, sub, tone in cards
+    )
+    return f'<div class="kp-wrap"><div class="kp-title">今日要点</div><div class="kp-grid">{html}</div></div>'
+
+
+def _breadth_chart(up, down, lu, ld):
+    """涨跌家数对比（100% 堆叠条）+ 涨跌停对比。"""
+    if up is None or down is None:
+        return ""
+    total = up + down
+    if total == 0:
+        return ""
+    up_pct = up / total * 100
+    parts = [f'''<div class="bc-wrap"><div class="bc-title">涨跌家数对比</div>
+<div class="bc-stack">
+  <div class="bc-seg bc-up" style="width:{up_pct:.1f}%"><span>涨 {up}</span></div>
+  <div class="bc-seg bc-down" style="width:{100-up_pct:.1f}%"><span>跌 {down}</span></div>
+</div>
+<div class="bc-axis"><span>0%</span><span>上涨占比 {up_pct:.1f}%</span><span>100%</span></div>''']
+    if lu is not None and ld is not None:
+        mx = max(lu, ld, 1)
+        parts.append(f'''<div class="bc-limits">
+  <div class="bc-limit"><span class="bc-lk">涨停</span>
+    <div class="bc-lt"><div class="bc-lf bc-up" style="width:{lu/mx*100:.0f}%"></div></div>
+    <span class="bc-lv bc-upv">{lu}</span></div>
+  <div class="bc-limit"><span class="bc-lk">跌停</span>
+    <div class="bc-lt"><div class="bc-lf bc-down" style="width:{ld/mx*100:.0f}%"></div></div>
+    <span class="bc-lv bc-downv">{ld}</span></div>
+</div>''')
+    parts.append("</div>")
+    return "".join(parts)
+
+
+def _margin_composition(fin, sec, total):
+    """两融构成环形图：直观看融券占比极低。"""
+    if not fin or not total:
+        return ""
+    sec = sec or 0
+    fin_pct = fin / total * 100
+    sec_pct = 100 - fin_pct
+    r = 54
+    circ = 2 * 3.14159 * r
+    fin_len = circ * fin_pct / 100
+    sec_len = circ - fin_len
+    return f'''<div class="mc2-wrap"><div class="mc2-title">两融构成</div>
+<svg class="mc2-donut" viewBox="0 0 160 160">
+  <circle cx="80" cy="80" r="{r}" fill="none" stroke="hsl({LOSS_HUE},80%,50%)" stroke-width="18"
+          stroke-dasharray="{sec_len:.1f} {circ:.1f}" transform="rotate(-90 80 80)"/>
+  <circle cx="80" cy="80" r="{r}" fill="none" stroke="hsl({GAIN_HUE},88%,56%)" stroke-width="18"
+          stroke-dasharray="{fin_len:.1f} {circ:.1f}" stroke-dashoffset="{-sec_len:.1f}" transform="rotate(-90 80 80)"/>
+  <text x="80" y="74" text-anchor="middle" class="mc2-big">{total/1e12:.2f}万亿</text>
+  <text x="80" y="94" text-anchor="middle" class="mc2-sm">两融余额</text>
+</svg>
+<div class="mc2-legend">
+  <span><i class="mc2-dot" style="background:hsl({GAIN_HUE},88%,56%)"></i>融资 {fin_pct:.2f}%</span>
+  <span><i class="mc2-dot" style="background:hsl({LOSS_HUE},80%,50%)"></i>融券 {sec_pct:.2f}%</span>
+</div></div>'''
+
+
+def _sector_bars(sectors, limit=12):
+    """行业涨跌幅双向条形图（比色块更利于精确比较幅度）。"""
+    if not sectors:
+        return ""
+    items = sorted(sectors, key=lambda s: s["v"], reverse=True)[:limit]
+    if len(items) < 3:
+        return ""
+    w, rh, bh = 560, 30, 16
+    pad_l, pad_r = 118, 64
+    h = len(items) * rh + 14
+    mx = max(abs(s["v"]) for s in items) or 1
+    zero = pad_l + (w - pad_l - pad_r) / 2
+    half = (w - pad_l - pad_r) / 2
+    parts = [f'<line x1="{zero:.1f}" y1="4" x2="{zero:.1f}" y2="{h-4}" '
+             f'stroke="rgba(255,255,255,.14)" stroke-width="1"/>']
+    for i, s in enumerate(items):
+        v = s["v"]
+        y = 8 + i * rh
+        bw = max(3.0, abs(v) / mx * half)
+        col = _flow_color(v)
+        if v >= 0:
+            bx, tx, anc = zero, zero + bw + 7, "start"
+        else:
+            bx, tx, anc = zero - bw, zero - bw - 7, "end"
+        parts.append(f'<text class="sb-n" x="6" y="{y+bh-3}">{esc(s["n"])}</text>')
+        parts.append(f'<rect x="{bx:.1f}" y="{y}" width="{bw:.1f}" height="{bh}" rx="3" fill="{col}"/>')
+        parts.append(f'<text class="sb-v" x="{tx:.1f}" y="{y+bh-3}" text-anchor="{anc}" fill="{col}">{v:+.2f}%</text>')
+    return f'<div class="sb-wrap"><div class="sb-title">行业涨跌幅排名</div><svg class="sb-chart" viewBox="0 0 {w} {h}">{"".join(parts)}</svg></div>'
 
 
 def _margin_line_chart(points):
@@ -229,12 +368,29 @@ def _margin_line_chart(points):
 
 def _macro_chips(data):
     if not data: return ""
-    labels = {"cpi":"CPI","ppi":"PPI","m2":"M2","she":"社融","lpr":"LPR","usdcny":"USDCNY"}
+    # 每个指标独立配色，并给出量纲提示
+    spec = {
+        "cpi": ("CPI", "%", "#fbbf24"),
+        "ppi": ("PPI", "", "#f472b6"),
+        "m2": ("M2", "%", "#22d3ee"),
+        "she": ("社融", "亿", "#a78bfa"),
+        "lpr": ("LPR", "%", "#34d399"),
+        "usdcny": ("USDCNY", "", "#fb923c"),
+    }
     chips = []
-    for k, lbl in labels.items():
-        if k in data:
+    for k, (lbl, u, col) in spec.items():
+        if k in data and data[k] is not None:
             v = data[k]
-            chips.append(f'<div class="mc-chip"><span class="mc-k">{lbl}</span><span class="mc-v">{esc(str(v))}</span></div>')
+            if k == "she":
+                disp = f"{v/1e12:.2f}万亿" if v > 1e10 else f"{v:.0f}{u}"
+            elif k == "ppi":
+                disp = f"{v:.1f}{u}"          # PPI 是指数，保留一位小数
+            else:
+                disp = f"{v:g}{u}"
+            chips.append(
+                f'<div class="mc-chip" style="--acc:{col}">'
+                f'<span class="mc-k">{lbl}</span>'
+                f'<span class="mc-v" style="color:{col}">{esc(disp)}</span></div>')
     return f'<div class="mc-wrap"><div class="mc-title">宏观指标</div><div class="mc-grid">{"".join(chips)}</div></div>'
 
 
@@ -243,13 +399,14 @@ def _overseas_bars(data):
     labels = {"nasdaq":"纳斯达克","dow":"道琼斯","sp500":"标普500","hsi":"恒生指数","gold":"黄金","oil":"原油","btc":"比特币"}
     items = [(labels[k], v) for k, v in data.items() if v is not None]
     if not items: return ""
+    items.sort(key=lambda kv: kv[1])
     bars = []
     mx = max(abs(v) for _, v in items) or 1
     for name, v in items:
         pct = abs(v) / mx * 100
-        col = "#ef4444" if v >= 0 else "#22c55e"
+        col = _flow_color(v)
         bars.append(f'''<div class="ob-row"><span class="ob-n">{name}</span>
-<div class="ob-track"><div class="ob-fill" style="width:{pct:.0f}%;background:{col}"></div></div>
+<div class="ob-track"><div class="ob-fill" style="width:{pct:.0f}%;background:linear-gradient(90deg,{col}55,{col})"></div></div>
 <span class="ob-v" style="color:{col}">{v:+.2f}%</span></div>''')
     return f'<div class="ob-wrap"><div class="ob-title">海外市场</div>{"".join(bars)}</div>'
 

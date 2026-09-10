@@ -23,11 +23,14 @@ _AMOUNT = r"([+\-]?[\d,]+(?:\.\d+)?)\s*(万亿|亿|万|%)?"
 
 
 def _label_amount(text, labels):
-    """按标签找首个数值，兼容 '标签：值' / '标签 值' / '标签值为值'。"""
+    """按标签找首个数值。
+
+    标签与数值之间允许少量修饰词（：/ 约 / 同比 / 增速 等），
+    但不得跨越数字或句号，避免匹配到相邻指标。
+    """
     for line in _lines(text):
         for label in labels:
-            # 容忍 "约"、"为"、"：" 等连接词
-            m = re.search(re.escape(label) + r"[：:值为\s约]*" + _AMOUNT, line)
+            m = re.search(re.escape(label) + r"[^\d+\-。\n]{0,10}" + _AMOUNT, line)
             if m:
                 return pnum(m.group(1) + (m.group(2) or ""))
     return None
