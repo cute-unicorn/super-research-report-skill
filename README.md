@@ -44,7 +44,10 @@
     └── scripts/fetch_stock_data.ps1
 └── report-web/                      # 可选：网页可视化模块
     ├── SKILL.md
-    └── scripts/render_report.py     # Markdown → 炫酷 HTML（零依赖）
+    ├── scripts/
+    │   ├── render_report.py         # CLI 入口
+    │   └── reportviz/               # 提取/渲染/图表/模板模块
+    └── tests/                       # 26 项断言 + 样例研报
 ```
 
 ## 自测
@@ -56,6 +59,14 @@ powershell -ExecutionPolicy Bypass -File "daily-market-research\scripts\tests\te
 ```
 
 覆盖交易日回退、JSON 解析、妙想转换器、兜底链路（强制问财失败 → 妙想补数）与校验门禁。
+
+修改网页渲染器后运行：
+
+```bash
+python report-web/tests/test_extract.py
+```
+
+覆盖数值解析、每日/个股报告字段提取、提取诊断、渲染组件完整性与自包含性。
 
 ## 工作流概览
 
@@ -163,10 +174,12 @@ Other empty: none
 ### 网页可视化（可选）
 
 ```bash
-python report-web/scripts/render_report.py --input "每日市场研报_2026-08-25.md" --output "daily_report.html"
+python report-web/scripts/render_report.py --input "每日市场研报_2026-08-25.md" --output "daily_report.html" --diagnose
 ```
 
 输出单文件 HTML，双击即可在浏览器中离线打开。内置玻璃拟态暗色主题、市场仪表盘（指数卡片、涨跌环形图、行业条形图）、数字动画与阅读进度条。
+
+加 `--diagnose` 可打印提取诊断（报告类型 + 未取到的字段），便于排查图表缺失原因。
 
 ## 研报能力
 
