@@ -76,6 +76,19 @@ class TestDailyExtract(unittest.TestCase):
         self.assertEqual(secs["氮肥"], 7.91)
         self.assertEqual(secs["疫苗"], -4.19)
 
+    def test_sectors_no_prose_leak(self):
+        """行业提取不得从"非共识 α"正文里误抓数据。
+
+        α 标题含"从领涨到领跌"字样，早期实现会把它当成行业段落，
+        把"市场一致预期"/"非共识点"也当成行业名。
+        """
+        names = [s["n"] for s in ex.ext_sec(self.text)]
+        for bad in ("市场一致预期", "非共识点", "证伪条件"):
+            self.assertNotIn(bad, names, f"行业列表混入正文标签: {bad}")
+        # 样本中只有 5 个行业（3 涨 + 2 跌）
+        self.assertEqual(len(names), 5, f"行业数量异常: {names}")
+        self.assertNotIn("农业化肥链", names)
+
     def test_margin(self):
         m = ex.ext_mgn(self.text)
         self.assertAlmostEqual(m["bal"], 12766.58e8, places=-6)

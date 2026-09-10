@@ -90,29 +90,33 @@ def _mgn_cards(m):
 
 
 def _waterfall(items):
-    """资金流向瀑布图"""
-    if not items or len(items) < 2: return ""
-    w, rh, pd = 480, 44, 120
-    h = len(items) * rh + 40
+    """资金流向横向条形图（从零轴左右展开，红=净流入，绿=净流出）。"""
+    if not items or len(items) < 2:
+        return ""
+    w, rh, bh = 520, 42, 20
+    pad_l, pad_r = 110, 78
+    h = len(items) * rh + 16
     mx = max(abs(v) for _, v in items) or 1
-    running = 0
-    bars = []
+    zero = pad_l + (w - pad_l - pad_r) / 2
+    half = (w - pad_l - pad_r) / 2
+
+    parts = [
+        f'<line x1="{zero:.1f}" y1="6" x2="{zero:.1f}" y2="{h-6}" '
+        f'stroke="rgba(255,255,255,.12)" stroke-width="1"/>'
+    ]
     for i, (lbl, v) in enumerate(items):
-        y = 16 + i * rh
-        old = running
-        running += v
-        start = min(old, running)
-        end = max(old, running)
-        bar_y1 = h - 30 - (start / mx) * (h - 50)
-        bar_y2 = h - 30 - (end / mx) * (h - 50)
-        bar_h = max(3, abs(bar_y2 - bar_y1))
-        top = min(bar_y1, bar_y2)
+        y = 8 + i * rh
+        bw = max(3.0, abs(v) / mx * half)
         col = "#ef4444" if v >= 0 else "#22c55e"
-        bars.append(f'<text class="cl" x="8" y="{y+16}">{esc(lbl)}</text>')
-        bars.append(f'<rect x="{pd}" y="{top:.1f}" width="60" height="{bar_h:.1f}" rx="3" fill="{col}" opacity=".7"/>')
-        bars.append(f'<text class="cv" x="{pd+68}" y="{y+16}" fill="{col}">{v:+.0f}亿</text>')
-    svg = f'<svg class="wf-chart" viewBox="0 0 {w} {h}">{"".join(bars)}</svg>'
-    return f'<div class="wf-wrap reveal on"><div class="wf-title">资金流向瀑布</div>{svg}</div>'
+        if v >= 0:
+            bx, tx, anchor = zero, zero + bw + 8, "start"
+        else:
+            bx, tx, anchor = zero - bw, zero - bw - 8, "end"
+        parts.append(f'<text class="cl" x="8" y="{y+bh-3}" text-anchor="start">{esc(lbl)}</text>')
+        parts.append(f'<rect x="{bx:.1f}" y="{y}" width="{bw:.1f}" height="{bh}" rx="4" fill="{col}" opacity=".8"/>')
+        parts.append(f'<text class="cv" x="{tx:.1f}" y="{y+bh-3}" text-anchor="{anchor}" fill="{col}">{v:+,.0f}亿</text>')
+    svg = f'<svg class="wf-chart" viewBox="0 0 {w} {h}">{"".join(parts)}</svg>'
+    return f'<div class="wf-wrap reveal on">{svg}</div>'
 
 
 def _risk_bar(level):
@@ -165,32 +169,61 @@ def _heatmap(sectors):
 
 
 def _margin_line_chart(points):
-    """两融余额折线图（带面积填充）"""
+    """两融余额折线图（双轴：融资余额用万亿，融券余额用亿）。
+
+    两个序列量级相差百倍（融资约 2.5 万亿，融券约 200 亿），
+    单轴绘制会让其中一条压成直线，且坐标单位会混淆，因此使用左右双轴。
+    """
     if len(points) < 2: return ""
-    w, h = 480, 180
-    pad_l, pad_r, pad_t, pad_b = 50, 20, 20, 30
+    w, h = 520, 190
+    pad_l, pad_r, pad_t, pad_b = 56, 56, 24, 34
     fin_vals = [p["fin"] for p in points]
     sec_vals = [p["sec"] for p in points]
-    all_vals = fin_vals + sec_vals
-    vmin, vmax = min(all_vals) * 0.95, max(all_vals) * 1.05
-    vrng = vmax - vmin or 1
+
+    def scale(vals):
+        lo, hi = min(vals), max(vals)
+        pad = (hi - lo) * 0.6 or max(abs(hi) * 0.02, 0.01)
+        return lo - pad, hi + pad
+
+    fmin, fmax = scale(fin_vals)
+    smin, smax = scale(sec_vals)
+    frng = fmax - fmin or 1
+    srng = smax - smin or 1
+
     def x(i): return pad_l + (w - pad_l - pad_r) * i / (len(points) - 1)
-    def y(v): return pad_t + (h - pad_t - pad_b) * (1 - (v - vmin) / vrng)
-    fin_pts = " ".join(f"{x(i):.1f},{y(p['fin']):.1f}" for i, p in enumerate(points))
-    sec_pts = " ".join(f"{x(i):.1f},{y(p['sec']):.1f}" for i, p in enumerate(points))
-    area = f"M {x(0):.1f},{y(fin_vals[0]):.1f} " + " ".join(f"L {x(i):.1f},{y(p['fin']):.1f}" for i, p in enumerate(points)) + f" L {x(len(points)-1):.1f},{h-pad_b} L {x(0):.1f},{h-pad_b} Z"
-    dots = "".join(f'<circle cx="{x(i):.1f}" cy="{y(p["fin"]):.1f}" r="4" fill="#6366f1" stroke="#0a0e1a" stroke-width="2"/>' for i, p in enumerate(points))
+    def yf(v): return pad_t + (h - pad_t - pad_b) * (1 - (v - fmin) / frng)
+    def ys(v): return pad_t + (h - pad_t - pad_b) * (1 - (v - smin) / srng)
+
+    fin_pts = " ".join(f"{x(i):.1f},{yf(p['fin']):.1f}" for i, p in enumerate(points))
+    sec_pts = " ".join(f"{x(i):.1f},{ys(p['sec']):.1f}" for i, p in enumerate(points))
+    area = (f"M {x(0):.1f},{yf(fin_vals[0]):.1f} "
+            + " ".join(f"L {x(i):.1f},{yf(p['fin']):.1f}" for i, p in enumerate(points))
+            + f" L {x(len(points)-1):.1f},{h-pad_b} L {x(0):.1f},{h-pad_b} Z")
+    dots = "".join(
+        f'<circle cx="{x(i):.1f}" cy="{yf(p["fin"]):.1f}" r="4" fill="#6366f1" '
+        f'stroke="#0a0e1a" stroke-width="2"/>' for i, p in enumerate(points))
     labels = "".join(f'<text class="ax-lbl" x="{x(i):.1f}" y="{h-8}" text-anchor="middle">{p["date"]}</text>' for i, p in enumerate(points))
-    ylabels = "".join(f'<text class="ax-lbl" x="{pad_l-6}" y="{y(v)+4:.1f}" text-anchor="end">{v:.1f}万亿</text>' for v in [vmin + vrng*0.25, vmin + vrng*0.5, vmin + vrng*0.75, vmax])
+    # 左轴：融资余额（万亿）；右轴：融券余额（亿）
+    yl = "".join(
+        f'<text class="ax-lbl" x="{pad_l-6}" y="{yf(v)+4:.1f}" text-anchor="end">{v:.2f}万亿</text>'
+        for v in [fmin, fmin + frng / 2, fmax])
+    yr = "".join(
+        f'<text class="ax-lbl" x="{w-pad_r+6}" y="{ys(v)+4:.1f}" text-anchor="start">{v:.0f}亿</text>'
+        for v in [smin, smin + srng / 2, smax])
+    vrules = "".join(
+        f'<line x1="{pad_l}" y1="{pad_t + (h-pad_t-pad_b)*k:.1f}" x2="{w-pad_r}" '
+        f'y2="{pad_t + (h-pad_t-pad_b)*k:.1f}" stroke="rgba(255,255,255,.05)" stroke-width="1"/>'
+        for k in (0, 0.5, 1))
     return f'''<div class="ml-wrap reveal on"><div class="ml-title">两融余额走势</div>
 <svg class="mlchart" viewBox="0 0 {w} {h}">
 <defs><linearGradient id="mlg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#6366f1" stop-opacity=".3"/><stop offset="100%" stop-color="#6366f1" stop-opacity="0"/></linearGradient></defs>
+{vrules}
 <path d="{area}" fill="url(#mlg)"/>
 <polyline class="ml-line" points="{fin_pts}" fill="none" stroke="#6366f1" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-<polyline points="{sec_pts}" fill="none" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="4 3" opacity=".6"/>
-{dots}{labels}{ylabels}
+<polyline points="{sec_pts}" fill="none" stroke="#f59e0b" stroke-width="2" stroke-dasharray="5 4" opacity=".85"/>
+{dots}{labels}{yl}{yr}
 </svg>
-<div class="ml-legend"><span class="ml-dot" style="background:#6366f1"></span>融资余额 <span class="ml-dot" style="background:#f59e0b"></span>融券余额</div>
+<div class="ml-legend"><span class="ml-dot" style="background:#6366f1"></span>融资余额（左轴/万亿） <span class="ml-dot" style="background:#f59e0b"></span>融券余额（右轴/亿）</div>
 </div>'''
 
 

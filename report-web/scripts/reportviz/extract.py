@@ -90,30 +90,63 @@ def ext_brd(text):
 
 
 # ---------------- 行业 ----------------
-_SEC_HEAD = re.compile(r"^#{1,4}.*?(行业与风格|领涨|涨幅榜|涨居前|领跌|行业)")
+_SEC_MARK = re.compile(r"(行业与风格|领涨行业|领跌行业|涨幅榜|跌幅榜|涨居前)")
 _BULLET_PCT = re.compile(r"^[-*]\s+(.+?)\s*([+\-]?\d+\.?\d*)\s*%")
 _NUM_PCT = re.compile(r"^\s*\d+[.、]\s+(.+?)\s*([+\-]?\d+\.?\d*)\s*%")
 
 
+def _is_sec_marker(line):
+    """判断一行是否为行业段落的起始标记。
+
+    必须避免误匹配正文（例：α 标题里的"从领涨到领跌"），因此要求
+    要么是 Markdown 标题，要么是短标签行。
+    """
+    s = line.strip()
+    if not _SEC_MARK.search(s):
+        return False
+    if s.startswith("#"):
+        return True
+    plain = s.strip("*：: ").strip()
+    return len(plain) <= 14
+
+
 def ext_sec(text, limit=24):
-    ret, on = [], False
-    for line in _lines(text):
-        if _SEC_HEAD.search(line):
-            on = True
+    """提取行业涨跌幅。
+
+    不依赖标题语法（## / 纯文本 / 加粗均可），改为定位"领涨/领跌"标记后
+    解析紧随其后的项目符号列表，遇到非列表内容即停止。
+    """
+    lines = _lines(text)
+    ret = []
+    i = 0
+    while i < len(lines):
+        if not _is_sec_marker(lines[i]):
+            i += 1
             continue
-        if on and re.match(r"^#{1,4}\s", line) and ret:
-            break
-        if not on:
-            continue
-        for m in (_BULLET_PCT.match(line), _NUM_PCT.match(line)):
+        j = i + 1
+        while j < len(lines):
+            s = lines[j]
+            if not s.strip():
+                j += 1
+                continue
+            m = _BULLET_PCT.match(s) or _NUM_PCT.match(s)
             if m:
                 try:
                     name = m.group(1).strip().split("：")[0].split(":")[0][:14]
                     ret.append({"n": name, "v": float(m.group(2))})
                 except ValueError:
                     pass
-                break
-    return ret[:limit]
+                j += 1
+                continue
+            break
+        i = j + 1 if j == i + 1 else j
+
+    seen, out = set(), []
+    for item in ret:
+        if item["n"] not in seen:
+            seen.add(item["n"])
+            out.append(item)
+    return out[:limit]
 
 
 # ---------------- 两融 ----------------
@@ -243,6 +276,10 @@ _FLOW_PATS = [
     (r"超大单.*?净流入.*?([+\-]?[\d.,]+)\s*(亿|万)", "xl", 1),
     (r"超大单.*?净流出.*?([\d.,]+)\s*(亿|万)", "xl", -1),
     (r"超大单净买入[：:]?\s*([+\-]?[\d.,]+)\s*(亿|万)", "xl", 1),
+    (r"大户.*?净流入\s*约?\s*([+\-]?[\d.,]+)\s*(亿|万)", "large", 1),
+    (r"大户.*?净流出\s*约?\s*([\d.,]+)\s*(亿|万)", "large", -1),
+    (r"散户.*?净流入\s*约?\s*([+\-]?[\d.,]+)\s*(亿|万)", "retail", 1),
+    (r"散户.*?净流出\s*约?\s*([\d.,]+)\s*(亿|万)", "retail", -1),
 ]
 
 

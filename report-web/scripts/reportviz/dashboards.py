@@ -58,15 +58,14 @@ def build_daily_dash(text):
     if sec: parts.append('<div class="dash-sec"><div class="dash-sec-t">板块热力图</div>' + _heatmap(sec) + '</div>')
     ff_data = ex.ext_fundflow(text)
     wf_items = []
-    if ff_data.get("main") is not None:
-        wf_items.append(("main", ff_data["main"] / 1e8))
-    if ff_data.get("xl") is not None:
-        wf_items.append(("xl", ff_data["xl"] / 1e8))
+    for key, label in (("xl", "机构(超大单)"), ("main", "主力"), ("large", "大户"), ("retail", "散户")):
+        if ff_data.get(key) is not None:
+            wf_items.append((label, ff_data[key] / 1e8))
     wf = _waterfall(wf_items)
-    if wf: parts.append(wf)
+    if wf:
+        parts.append('<div class="dash-sec"><div class="dash-sec-t">资金流向</div>' + wf + '</div>')
     rb = _risk_bar(5)
     if rb: parts.append(rb)
-    if mgn["bal"] or mgn["net"]: parts.append(_mgn_cards(mgn))
     mc = _macro_chips(macro)
     ob = _overseas_bars(ovs)
     if mc or ob:
