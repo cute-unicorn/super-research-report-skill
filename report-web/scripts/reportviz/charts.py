@@ -490,11 +490,12 @@ def _rating_card(d):
 def _stock_metrics(d):
     items = []
     if d["price"] is not None: items.append(("最新价", f'{d["price"]:.2f} 元', ""))
-    if d["mcap"] is not None: items.append(("总市值", f'{d["mcap"]:.1f} 亿', ""))
+    # mcap / rev 在提取阶段已归一化为绝对值，展示时需换算回"亿"
+    if d["mcap"] is not None: items.append(("总市值", f'{d["mcap"] / 1e8:,.0f} 亿', ""))
     if d["pe"] is not None: items.append(("PE TTM", f'{d["pe"]:.1f}', ""))
     if d["pb"] is not None: items.append(("PB", f'{d["pb"]:.2f}', ""))
     if d["div"] is not None: items.append(("股息率", f'{d["div"]:.2f}%', ""))
-    if d["rev"] is not None: items.append(("最新营收", f'{d["rev"]:.1f} 亿', ""))
+    if d["rev"] is not None: items.append(("最新营收", f'{d["rev"] / 1e8:,.1f} 亿', ""))
     if d["rev_chg"] is not None: items.append(("营收同比", f'{d["rev_chg"]:+.2f}%', vcls(d["rev_chg"])))
     if d["profit_chg"] is not None: items.append(("归母同比", f'{d["profit_chg"]:+.2f}%', vcls(d["profit_chg"])))
     if d["margin"] is not None: items.append(("毛利率", f'{d["margin"]:.1f}%', ""))

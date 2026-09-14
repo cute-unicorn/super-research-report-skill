@@ -27,11 +27,21 @@ def _label_amount(text, labels):
 
     标签与数值之间允许少量修饰词（：/ 约 / 同比 / 增速 等），
     但不得跨越数字或句号，避免匹配到相邻指标。
+    优先在表格行中匹配（数值更精确），再回退到正文。
     """
-    for line in _lines(text):
-        for label in labels:
-            m = re.search(re.escape(label) + r"[^\d+\-。\n]{0,10}" + _AMOUNT, line)
-            if m:
+    lines = _lines(text)
+    table_lines = [l for l in lines if l.lstrip().startswith("|")]
+    # (?![日月周年]) 防止把 "5日" "2026年" 这类期间引用当成数值
+    pat_tail = re.compile(r"(?![日月周年])")
+    for pool in (table_lines, lines):
+        for line in pool:
+            for label in labels:
+                m = re.search(re.escape(label) + r"[^\d+\-。\n]{0,10}" + _AMOUNT, line)
+                if not m:
+                    continue
+                end = m.end()
+                if end < len(line) and line[end] in "日月周年":
+                    continue
                 return pnum(m.group(1) + (m.group(2) or ""))
     return None
 
@@ -183,6 +193,24 @@ def ext_stock(text):
                         pass
         return None
 
+    # 表格/加粗写法下，标签与数值间会夹着 "|"、"**" 等符号。
+    # _SEP 必须排除数字与正负号，否则会把 "-4.11" 的负号吃掉。
+    _SEP = r"[^\d+\-\n。]{0,14}"
+    # 区间连接符：至 / - / ~ / – / —
+    _DASH = r"[至\-~–—]+"
+
+    def val(pats):
+        """在 _SEP 容忍下取首个数值。"""
+        for line in _lines(text):
+            for lab in pats:
+                m = re.search(re.escape(lab) + _SEP + r"([+\-]?[\d,]+(?:\.\d+)?)", line)
+                if m:
+                    try:
+                        return float(m.group(1).replace(",", ""))
+                    except ValueError:
+                        pass
+        return None
+
     d["rating"] = first([r"客观评级[：:]\s*([^（(\n]+)"], str) or ""
     m = re.search(r"目标区间\s*([\d.]+)\s*[-~至]\s*([\d.]+)", text)
     if m:
@@ -190,10 +218,10 @@ def ext_stock(text):
 
     d["price"] = _label_amount(text, ("收盘价", "收盘", "现价", "最新价"))
     d["mcap"] = _label_amount(text, ("总市值",))
-    d["pe_ttm"] = first([r"PE\s*TTM\s*([\d.]+)"])
+    d["pe_ttm"] = val(["PE TTM", "市盈率ttm", "市盈率(TTM)", "PE(TTM)"])
     d["pe"] = d["pe_ttm"]
-    d["pb"] = first([r"PB\s*([\d.]+)"])
-    d["div"] = first([r"股息率[^%\d]*([\d.]+)\s*%"])
+    d["pb"] = val(["PB"])
+    d["div"] = val(["股息率"])
     d["rev"] = _label_amount(text, ("营业收入", "营收"))
     # 优先取括号内的同比（如 "营收 17.10 亿（-21.05%）"），再回退到裸百分比
     d["rev_chg"] = first([
@@ -206,20 +234,20 @@ def ext_stock(text):
         r"归母净利润同比增长率[^%\d]*([+\-]?\d+\.?\d*)\s*%",
         r"归母[^%\d]*([+\-]?\d+\.?\d*)\s*%",
     ])
-    d["margin"] = first([r"毛利率\s*([\d.]+)\s*%"])
-    d["roe"] = first([r"ROE\s*[（(]?\s*([+\-]?[\d.]+)\s*%"])
-    d["debt"] = first([r"负债率\s*([\d.]+)\s*%"])
-    d["chip_pct"] = first([r"获利盘\s*([\d.]+)\s*%"])
-    d["chip_avg"] = first([r"平均成本\s*([\d.]+)"])
-    m = re.search(r"90%\s*成本区间\s*约?\s*([\d.]+)\s*[至\-~]+\s*([\d.]+)", text)
+    d["margin"] = val(["毛利率"])
+    d["roe"] = val(["ROE"])
+    d["debt"] = val(["负债率", "资产负债率"])
+    d["chip_pct"] = val(["获利盘", "收盘获利"])
+    d["chip_avg"] = val(["平均成本"])
+    m = re.search(r"90%\s*成本区间" + _SEP + r"([\d.]+)\s*" + _DASH + r"\s*([\d.]+)", text)
     if m:
         d["c90lo"], d["c90hi"] = float(m.group(1)), float(m.group(2))
-    m = re.search(r"70%\s*成本区间\s*约?\s*([\d.]+)\s*[至\-~]+\s*([\d.]+)", text)
+    m = re.search(r"70%\s*成本区间" + _SEP + r"([\d.]+)\s*" + _DASH + r"\s*([\d.]+)", text)
     if m:
         d["c70lo"], d["c70hi"] = float(m.group(1)), float(m.group(2))
-    d["ma20"] = first([r"MA20\s*[约为]?\s*([\d.]+)"])
-    d["ma60"] = first([r"MA60\s*[约为]?\s*([\d.]+)"])
-    d["rsi"] = first([r"RSI\s*[约为]?\s*([\d.]+)"])
+    d["ma20"] = val(["20日MA", "MA20"])
+    d["ma60"] = val(["60日MA", "MA60"])
+    d["rsi"] = val(["RSI"])
     return d
 
 
