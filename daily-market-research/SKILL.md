@@ -27,7 +27,8 @@ description: 生成每日市场研报（基础版 + 深度分析与标的策略�
 
 2. 抓取数据。
    - 运行：`powershell -ExecutionPolicy Bypass -File "<技能目录>\scripts\fetch_daily_data.ps1" -Workspace "D:\codex\研报"`
-   - 建议加 `-Strict`：关键数据缺失时直接中止，避免在数据不全的情况下生成报告。
+   - 默认即严格模式：关键数据缺失或质量门禁失败时直接中止。
+   - 仅在调试抓取脚本时使用 `-AllowCritical`；正式研报禁止使用该开关。
    - 脚本会把原始 JSON 保存到 `<Workspace>\data\<date>\`。
    - 脚本同时抓取两融水平（融资余额、融券余额、两融余额、融资净买入、融资买入额、融资余额环比，市场合计口径）、情绪数据（北向资金、市场宽度、连板/昨日涨停表现）和资金结构数据（超大单、大单、中单、小单、行业资金流入流出）。
    - **自动兜底链路**：每条查询失败时先自动加 `--call-type retry` 重试；关键扫描数据仍为空时，自动改用东方财富妙想选股（`mx-xuangu`）补数，并经 `mx_to_iwencai.py` 转成与问财同构的 JSON，下游消费逻辑无需改动。兜底文件会标注 `"source": "mx-xuangu"`。
@@ -65,11 +66,16 @@ description: 生成每日市场研报（基础版 + 深度分析与标的策略�
    - 每个板块下方列出 2-4 只龙头股，且这些龙头股必须全部进入“个股深度分析”并逐一完整分析。
    - “情绪与资金分析”章节必须包含“两融水平及分析”小节，覆盖两融余额、融资余额、融券余额、融资净买入、融资买入额占成交额比例、杠杆率与去杠杆风险。
    - 报告开头或板块部分写明“本次选择该板块/个股的数据依据”，证明不是沿用旧名单。
+   - 报告末尾必须包含“次日观察与复盘清单”，列出 3~5 个可验证指标、阈值和触发动作，并说明哪些变化会推翻当日方向判断。
 
 8. 验证。
    - 先检查抓取脚本末尾的 `FETCH SUMMARY`：`Empty critical` 必须为 `none`，否则不得生成报告。
+   - 读取 `<Workspace>\data\<date>\data_quality.json`，其 `report_allowed` 必须为 `true`。若为 `false`，不得生成正式报告，只在日志或对话中输出 `blocking_reasons` 与修复动作。
    - 若 `Fallbacks used` 非空，报告中对应数据需标注来源为东方财富妙想。
    - 两份文件都存在于输出目录。
+   - 生成后必须分别运行结构验收：
+     `python "<技能目录>\scripts\lib\validate_report.py" "<报告文件>" --profile daily-basic` 和
+     `--profile daily-deep`；`report_valid` 必须为 `true`，否则修正报告后重新验收。
    - 每个章节都有风险提示。
    - 基础版必须包含“非共识 α 观点”章节，深度版必须包含“非共识 α 观点”章节；每条非共识观点都要包含“市场一致预期 / 非共识点 / α 来源与兑现路径 / 证伪条件”。
    - 模块十（情绪分析）、模块十一（两融水平及分析）和模块十二（资金分析）必须使用接口实际返回的数据；两融数据使用沪深两市合计口径，机构资金、主力资金、大户资金、散户资金需标注近似口径。
@@ -100,6 +106,9 @@ description: 生成每日市场研报（基础版 + 深度分析与标的策略�
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File "<技能目录>\scripts\tests\test_common.ps1"
+python "<技能目录>\scripts\tests\test_validate_facts.py"
+python "<技能目录>\scripts\tests\test_validate_report.py"
+powershell -ExecutionPolicy Bypass -File "<技能目录>\scripts\tests\test_fetch_gate.ps1"
 ```
 
-覆盖：交易日回退、JSON 条数解析、妙想转换器、兜底链路（强制问财失败→妙想补数）、校验门禁。
+覆盖：交易日回退、JSON 条数解析、妙想转换器、兜底链路、日频数据一致性、市场日期一致性、报告结构验收和严格门禁退出码。

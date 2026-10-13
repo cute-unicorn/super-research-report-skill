@@ -3,11 +3,14 @@
     [string]$Date = "",
     [string]$SkillRoot = "",
     [string[]]$StockNames = @(),
-    [switch]$Strict
+    [switch]$Strict,
+    [switch]$AllowCritical
 )
 
 $ErrorActionPreference = "Stop"
 if (-not $Date) { $Date = Get-Date -Format "yyyy-MM-dd" }
+$script:StrictMode = -not $AllowCritical
+if ($Strict) { $script:StrictMode = $true }
 
 $profilePath = "$HOME\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1"
 if (-not $env:IWENCAI_API_KEY -and (Test-Path -LiteralPath $profilePath)) { . $profilePath }
@@ -29,6 +32,10 @@ $env:PYTHONIOENCODING = "utf-8"
 
 $script:Failures = @()
 $script:Fallbacks = @()
+$script:BuildFailed = $false
+$script:QualityFail = 0
+$script:QualityReportAllowed = $true
+$script:QualityBlocking = @()
 
 # ---------- 工具函数 ----------
 function Get-JsonDataCount {
@@ -106,6 +113,8 @@ Invoke-QueryWithRetry "hithink-market-query" "cli.py" @("--query", "$stocks 获�
 # 财务 / 比率 / 评级
 Invoke-QueryWithRetry "hithink-finance-query" "cli.py" @("--query", "$stocks 营业收入 归母净利润 毛利率", "--limit", "10") "stocks_finance.json" | Out-Null
 Invoke-QueryWithRetry "hithink-finance-query" "cli.py" @("--query", "$stocks ROE 资产负债率 每股收益 经营现金流", "--limit", "10") "stocks_ratios.json" | Out-Null
+Invoke-QueryWithRetry "hithink-finance-query" "cli.py" @("--query", "$stocks 近12个季度 单季度营业收入 单季度归母净利润 单季度扣非净利润 单季度经营活动现金流 单季度销售毛利率 单季度净资产收益率 单季度销售商品和提供劳务收到的现金", "--limit", "20") "stocks_timeseries_single_q.json" | Out-Null
+Invoke-QueryWithRetry "hithink-finance-query" "cli.py" @("--query", "$stocks 近12个季度 营业收入 归母净利润 扣非净利润 累计经营活动产生的现金流量净额 销售毛利率 净资产收益率 销售商品和提供劳务收到的现金 合同负债 应收账款 总资产 负债合计", "--limit", "20") "stocks_timeseries_cumulative.json" | Out-Null
 Invoke-QueryWithRetry "hithink-insresearch-query" "cli.py" @("--query", "$stocks 最新评级 目标价 研报", "--limit", "10") "stocks_ratings.json" | Out-Null
 
 # 新闻 / 公告 / 研报
@@ -132,11 +141,75 @@ if (Test-Path -LiteralPath $mxSearch) {
 }
 $ErrorActionPreference = $prevErrorAction
 
+# ---------- 多期财务时间序列构建与门禁 ----------
+$timeseriesSingle = Join-Path $OutDir "stocks_timeseries_single_q.json"
+$timeseriesCumulative = Join-Path $OutDir "stocks_timeseries_cumulative.json"
+$timeseriesPath = Join-Path $OutDir "stocks_timeseries.json"
+$timeseriesBuilder = Join-Path $PSScriptRoot "lib\build_timeseries.py"
+$timeseriesValidator = Join-Path $PSScriptRoot "lib\validate_stock_facts.py"
+$timeseriesQualityPath = Join-Path $OutDir "stock_data_quality.json"
+
+if (Test-Path -LiteralPath $timeseriesBuilder) {
+    $buildLines = & python $timeseriesBuilder `
+        --single-q $timeseriesSingle `
+        --cumulative $timeseriesCumulative `
+        --out $timeseriesPath `
+        --as-of $Date 2>&1
+    $buildExit = $LASTEXITCODE
+    $buildLines | Out-File -LiteralPath (Join-Path $OutDir "stocks_timeseries_build.log") -Encoding utf8
+    if ($buildExit -ne 0) {
+        $script:Failures += "stocks_timeseries(build)"
+        $script:BuildFailed = $true
+    }
+} else {
+    $script:Failures += "build_timeseries.py(missing)"
+    $script:BuildFailed = $true
+}
+
+$qualitySummary = "not checked"
+if (Test-Path -LiteralPath $timeseriesValidator) {
+    $qualityLines = & python $timeseriesValidator `
+        $OutDir `
+        --out $timeseriesQualityPath `
+        --as-of $Date `
+        --strict 2>&1
+    $qualityExit = $LASTEXITCODE
+    $qualityLines | Out-File -LiteralPath (Join-Path $OutDir "stock_data_quality.log") -Encoding utf8
+    $qualitySummary = ($qualityLines | Select-Object -First 1)
+    if ($qualityExit -ne 0) {
+        $script:Failures += "stock_data_quality(critical)"
+        $script:QualityFail = 1
+    }
+} else {
+    $script:Failures += "validate_stock_facts.py(missing)"
+    $script:QualityFail = 1
+    $script:QualityReportAllowed = $false
+    $script:QualityBlocking = @("validate_stock_facts.py missing")
+}
+
+if (Test-Path -LiteralPath $timeseriesQualityPath) {
+    try {
+        $qualityJson = Get-Content -LiteralPath $timeseriesQualityPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $script:QualityReportAllowed = [bool]$qualityJson.report_allowed
+        if ($null -ne $qualityJson.summary -and [int]$qualityJson.summary.fail -gt 0) {
+            $script:QualityFail = 1
+        }
+        $script:QualityBlocking = @($qualityJson.blocking_reasons)
+    } catch {
+        $script:QualityFail = 1
+        $script:QualityReportAllowed = $false
+        $script:QualityBlocking = @("stock_data_quality.json parse failed: " + $_.Exception.Message)
+    }
+}
+
 # ---------- 校验门禁 ----------
-$criticalFiles = @("stocks_quote.json","stocks_valuation.json","stocks_finance.json","stocks_ratios.json")
+$criticalFiles = @("stocks_quote.json","stocks_valuation.json","stocks_finance.json","stocks_ratios.json","stocks_timeseries.json")
 $emptyCritical = @()
 foreach ($cf in $criticalFiles) {
     if ((Get-JsonDataCount (Join-Path $OutDir $cf)) -eq 0) { $emptyCritical += $cf }
+}
+if (-not (Test-Path -LiteralPath $timeseriesQualityPath)) {
+    $emptyCritical += "stock_data_quality.json"
 }
 
 Write-Host ""
@@ -148,9 +221,21 @@ $otherText = if ($script:Failures.Count) { ($script:Failures | Select-Object -Un
 Write-Host ("Retry succeeded: {0}" -f $retryText)
 Write-Host ("Empty critical: {0}" -f $critText)
 Write-Host ("Other empty: {0}" -f $otherText)
+Write-Host ("Data quality: {0}" -f $qualitySummary)
+Write-Host ("Quality gate: report_allowed={0}; blocking={1}" -f $script:QualityReportAllowed, (($script:QualityBlocking | Select-Object -Unique) -join "; "))
 
+$gateMessages = @()
 if ($emptyCritical.Count -gt 0) {
-    $msg = "个股关键数据缺失: " + ($emptyCritical -join ", ") + "。请勿在缺少这些数据的情况下生成个股研报。"
-    if ($Strict) { throw $msg } else { Write-Warning $msg }
+    $gateMessages += "个股关键数据缺失: " + ($emptyCritical -join ", ")
+}
+if ($script:BuildFailed) {
+    $gateMessages += "财务时间序列构建失败"
+}
+if ($script:QualityFail -gt 0 -or -not $script:QualityReportAllowed) {
+    $gateMessages += "个股数据质量门禁失败: " + (($script:QualityBlocking | Select-Object -Unique) -join "; ")
+}
+if ($gateMessages.Count -gt 0) {
+    $msg = ($gateMessages -join " | ") + "。请勿在门禁失败时生成个股研报。"
+    if ($script:StrictMode) { throw $msg } else { Write-Warning $msg }
 }
 Write-Host "Stock data fetched to: $OutDir"

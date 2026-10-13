@@ -19,6 +19,9 @@
 - 政策逐条解读：国内外政策与要闻先“内容解读”再“影响分析”。
 - 两融水平及分析：沪深两市合计口径，覆盖水平、边际、活跃度、杠杆结构、信号解读、去杠杆风险。
 - 情绪与资金结构：北向、涨跌停、连板、机构/主力/大户/散户资金（近似口径）。
+- 多期财务序列：个股研报自动抓取 12 个报告期，区分单季度与累计口径，计算收现比、应收账款/营收增速差、合同负债同比、经营现金流/净利润等派生指标。
+- 数据质量门禁：日频数据与个股多期数据都有独立校验；存在 CRITICAL 时拒绝生成结论，WARN 必须在报告中解释。
+- 报告结构验收：日报和个股研报生成后自动检查固定章节、政策逐条解读、非共识、风险提示、关键财务字段与免责声明。
 - 风控纪律：每只个股与板块都给出止损、止盈与风险提示；目标价与止损均为示例参数。
 - 可接入定时自动化：配合 Codex 定时任务，每日自动产出并保存研报。
 - 可选网页可视化：将研报渲染为玻璃拟态风格的自包含 HTML 页面（零依赖，双击打开）。
@@ -37,11 +40,22 @@
 │       ├── fetch_miaoxiang_data.ps1 # 东方财富妙想数据抓取
 │       ├── mx_to_iwencai.py         # 妙想结果 → 问财同构结构转换器
 │       ├── lib/common.ps1           # 共享工具函数
-│       └── tests/                   # 自测（17 项断言）
+│       ├── lib/validate_facts.py    # 日频数据一致性校验
+│       ├── lib/validate_report.py   # 日报结构验收
+│       ├── lib/merge_assets.py      # 全球商品数据合并
+│       └── tests/                   # 数据门禁、报告结构、PowerShell 回归与抓取门禁测试
 └── stock-deep-research/             # 个股机构级深度研报技能
     ├── SKILL.md
     ├── references/report_spec.md
-    └── scripts/fetch_stock_data.ps1
+    └── scripts/
+        ├── fetch_stock_data.ps1
+        ├── lib/build_timeseries.py       # 单季度/累计财务时间序列
+        ├── lib/validate_stock_facts.py   # 个股数据质量门禁
+        ├── lib/validate_report.py        # 个股研报结构验收
+        └── tests/
+            ├── test_timeseries.py        # 27 项离线测试
+            ├── test_fetch_gate.ps1       # 严格门禁端到端测试
+            └── stub_source.py            # 离线数据源 stub
 └── report-web/                      # 可选：网页可视化模块
     ├── SKILL.md
     ├── scripts/
@@ -58,7 +72,26 @@
 powershell -ExecutionPolicy Bypass -File "daily-market-research\scripts\tests\test_common.ps1"
 ```
 
-覆盖交易日回退、JSON 解析、妙想转换器、兜底链路（强制问财失败 → 妙想补数）与校验门禁。
+覆盖交易日回退、JSON 解析、妙想转换器、兜底链路（强制问财失败 → 妙想补数）与日频校验门禁。
+
+修改个股多期财务抓取或门禁后运行：
+
+```powershell
+python "stock-deep-research\scripts\tests\test_timeseries.py"
+```
+
+覆盖时间序列合并、单季度/累计口径、收现比、应收账款/营收增速差、合同负债、经营现金流背离和派生值篡改拦截。
+
+修改报告结构验收器后运行：
+
+```powershell
+python "daily-market-research\scripts\tests\test_validate_report.py"
+python "daily-market-research\scripts\tests\test_merge_assets.py"
+powershell -ExecutionPolicy Bypass -File "daily-market-research\scripts\tests\test_fetch_gate.ps1"
+powershell -ExecutionPolicy Bypass -File "stock-deep-research\scripts\tests\test_fetch_gate.ps1"
+```
+
+覆盖日报章节完整性、个股研报关键字段、缺失章节拦截、占位符告警、两份验收器同步，以及默认严格门禁的非零退出与 `AllowCritical` 调试旁路。
 
 修改网页渲染器后运行：
 
@@ -143,6 +176,13 @@ powershell -ExecutionPolicy Bypass -File "<技能目录>\daily-market-research\s
 
 - `深度研报_公司简称_YYYY-MM-DD.md`
 
+抓取脚本会额外生成：
+
+- `stocks_timeseries.json`：12 个报告期的单季度、累计、资产负债和派生指标。
+- `stock_data_quality.json`：个股数据门禁结果；`summary.fail` 必须为 0。
+
+报告中的财务维度必须展示至少 8 个报告期，并明确区分单季度与年初至今累计。出现“利润为正、经营现金流为负”“应收账款增速显著快于营收”或“合同负债同比大幅下降”时，必须给出原因假设、证据和证伪条件，不能机械地把单期变化写成趋势结论。
+
 ### 自动化（可选）
 
 配合 Codex 定时任务（心跳/自动化），可每天早上定时生成研报并保存到指定目录：
@@ -153,11 +193,14 @@ powershell -ExecutionPolicy Bypass -File "<技能目录>\daily-market-research\s
 
 ### 数据可靠性（可选）
 
-抓取脚本支持自动重试、妙想兜底和完整性校验：
+抓取脚本支持自动重试、妙想兜底和完整性校验。默认执行严格门禁：
 
 ```powershell
-# -Strict: 关键数据缺失时直接中止，避免生成残缺报告
-powershell -ExecutionPolicy Bypass -File "daily-market-research\scripts\fetch_daily_data.ps1" -Workspace "D:\codex\研报" -Strict
+# 默认模式：关键数据缺失、日期错配或数据质量 CRITICAL 时直接中止
+powershell -ExecutionPolicy Bypass -File "daily-market-research\scripts\fetch_daily_data.ps1" -Workspace "D:\codex\研报"
+
+# 仅在调试时使用；正式报告禁止绕过门禁
+powershell -ExecutionPolicy Bypass -File "daily-market-research\scripts\fetch_daily_data.ps1" -Workspace "D:\codex\研报" -AllowCritical
 ```
 
 脚本末尾会输出摘要：
@@ -170,6 +213,24 @@ Other empty: none
 ```
 
 `Empty critical` 非 `none` 时说明核心数据缺失，此时不应生成研报。
+
+个股抓取的门禁摘要示例：
+
+```text
+Data quality: Stock data quality: 6 pass / 0 fail / 3 warn / 0 missing
+```
+
+`fail` 大于 0 时不得生成涉及财务趋势、订单前瞻或估值的结论；`warn` 可以生成报告，但必须在正文中逐项解释。
+
+报告生成后运行结构验收：
+
+```powershell
+python "daily-market-research\scripts\lib\validate_report.py" "每日市场研报_YYYY-MM-DD.md" --profile daily-basic
+python "daily-market-research\scripts\lib\validate_report.py" "每日市场研报_YYYY-MM-DD_深度分析与标的策略.md" --profile daily-deep
+python "stock-deep-research\scripts\lib\validate_report.py" "深度研报_公司简称_YYYY-MM-DD.md" --profile stock
+```
+
+验收器返回非零或 `report_valid=false` 时，必须先修正报告，不能直接交付。
 
 ### 网页可视化（可选）
 

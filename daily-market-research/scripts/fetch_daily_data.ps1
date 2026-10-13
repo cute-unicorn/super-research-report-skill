@@ -3,12 +3,15 @@
     [string]$Date = "",
     [string]$SkillRoot = "",
     [string[]]$StockNames = @(),
-    [switch]$Strict
+    [switch]$Strict,
+    [switch]$AllowCritical
 )
 
 $ErrorActionPreference = "Stop"
 
 if (-not $Date) { $Date = Get-Date -Format "yyyy-MM-dd" }
+$script:StrictMode = -not $AllowCritical
+if ($Strict) { $script:StrictMode = $true }
 
 $profilePath = "$HOME\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1"
 if (-not $env:IWENCAI_API_KEY -and (Test-Path -LiteralPath $profilePath)) { . $profilePath }
@@ -28,11 +31,6 @@ $MxDir = Join-Path $OutDir "mx"
 New-Item -ItemType Directory -Force -Path $MxDir | Out-Null
 $MxRoot = Join-Path $HOME ".codex\skills"
 $env:PYTHONIOENCODING = "utf-8"
-
-if ($StockNames.Count -eq 0) {
-    Get-ChildItem -LiteralPath $OutDir -Filter "stocks_*.json" -ErrorAction SilentlyContinue |
-        ForEach-Object { [System.IO.File]::Delete($_.FullName) }
-}
 
 # ---------- 工具函数（见 lib/common.ps1） ----------
 $script:Failures = @()
@@ -94,12 +92,27 @@ if (Test-Path -LiteralPath $topIndustryPath) {
 # ---------- 宏观与海外 ----------
 Invoke-QueryWithFallback "hithink-macro-query" "cli.py" @("--query", "最近一期中国CPI PPI 社融 M2增速", "--limit", "10", "--call-type", "retry") "macro_cn.json" $null | Out-Null
 Invoke-QueryWithFallback "hithink-macro-query" "cli.py" @("--query", "中国CPI同比 最新", "--limit", "5", "--call-type", "retry") "macro_cpi.json" $null | Out-Null
+Invoke-QueryWithFallback "hithink-macro-query" "cli.py" @("--query", "中国PPI同比 最新", "--limit", "5", "--call-type", "retry") "macro_ppi.json" $null | Out-Null
 Invoke-QueryWithFallback "hithink-macro-query" "cli.py" @("--query", "中国M2同比增速 最新", "--limit", "5", "--call-type", "retry") "macro_m2.json" $null | Out-Null
 Invoke-QueryWithFallback "hithink-macro-query" "cli.py" @("--query", "社会融资规模存量 最新", "--limit", "5", "--call-type", "retry") "macro_she.json" $null | Out-Null
 Invoke-QueryWithFallback "hithink-macro-query" "cli.py" @("--query", "LPR 最新利率", "--limit", "5", "--call-type", "retry") "macro_lpr.json" $null | Out-Null
 Invoke-QueryWithFallback "hithink-macro-query" "cli.py" @("--query", "美元兑人民币汇率 最新", "--limit", "5", "--call-type", "retry") "macro_usdcny.json" $null | Out-Null
 Invoke-QueryWithFallback "hithink-macro-query" "cli.py" @("--query", "美元指数 美国10年期国债收益率 美元兑日元 欧元兑美元 最新", "--limit", "10", "--call-type", "retry") "macro_global.json" $null | Out-Null
-Invoke-QueryWithFallback "hithink-macro-query" "cli.py" @("--query", "伦敦现货黄金 布伦特原油 铜 最新", "--limit", "10", "--call-type", "retry") "macro_assets.json" $null | Out-Null
+Invoke-QueryWithFallback "hithink-macro-query" "cli.py" @("--query", "沪金 主力合约 最新价", "--limit", "5", "--call-type", "retry") "macro_assets_gold.json" $null | Out-Null
+Invoke-QueryWithFallback "hithink-macro-query" "cli.py" @("--query", "布伦特原油 最新价", "--limit", "5", "--call-type", "retry") "macro_assets_oil.json" $null | Out-Null
+Invoke-QueryWithFallback "hithink-macro-query" "cli.py" @("--query", "沪铜 主力合约 最新价", "--limit", "5", "--call-type", "retry") "macro_assets_copper.json" $null | Out-Null
+$mergeAssets = Join-Path $PSScriptRoot "lib\merge_assets.py"
+if (Test-Path -LiteralPath $mergeAssets) {
+    & python $mergeAssets `
+        --out (Join-Path $OutDir "macro_assets.json") `
+        --as-of $Date `
+        --input (Join-Path $OutDir "macro_assets_gold.json") `
+        --input (Join-Path $OutDir "macro_assets_oil.json") `
+        --input (Join-Path $OutDir "macro_assets_copper.json") 2>&1 | ForEach-Object { Write-Host $_ }
+    if ($LASTEXITCODE -ne 0) { $script:Failures += "macro_assets(merge)" }
+} else {
+    $script:Failures += "merge_assets.py(missing)"
+}
 
 # ---------- 个股（仅当日选定，无固定池） ----------
 if ($StockNames.Count -gt 0) {
@@ -139,6 +152,50 @@ foreach ($cf in $criticalFiles) {
     if ((Get-JsonDataCount (Join-Path $OutDir $cf)) -eq 0) { $emptyCritical += $cf }
 }
 
+# ---------- 数据一致性校验（勾稽校验，捕获"文件非空但数值自相矛盾"） ----------
+$script:QualityFail = 0
+$script:QualityLine = "not run"
+$script:QualityReportAllowed = $true
+$script:QualityBlocking = @()
+$validator = Join-Path $PSScriptRoot "lib\validate_facts.py"
+if (Test-Path -LiteralPath $validator) {
+    $qualityArgs = @($validator, $OutDir)
+    if ($script:StrictMode) { $qualityArgs += "--strict" }
+    $qualityOut = & python @qualityArgs 2>&1
+    $qualityExit = $LASTEXITCODE
+    $lines = @($qualityOut | ForEach-Object { $_.ToString() })
+    if ($lines.Count -gt 0) {
+        # 校验器首行自带 "Data quality: " 前缀，这里剥离以免汇总行重复
+        $script:QualityLine = $lines[0] -replace '^Data quality:\s*', ''
+        foreach ($ln in $lines) { Write-Host $ln }
+    }
+    if ($qualityExit -ne 0) {
+        $script:QualityFail = 1
+        $script:QualityLine = "validator failed with exit code $qualityExit"
+    }
+} else {
+    Write-Warning ("[quality] validator not found: {0}" -f $validator)
+    $script:QualityLine = "validator missing"
+    $script:QualityFail = 1
+    $script:QualityReportAllowed = $false
+    $script:QualityBlocking = @("validate_facts.py missing")
+}
+$qualityPath = Join-Path $OutDir "data_quality.json"
+if (Test-Path -LiteralPath $qualityPath) {
+    try {
+        $qualityJson = Get-Content -LiteralPath $qualityPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $script:QualityReportAllowed = [bool]$qualityJson.report_allowed
+        if ($null -ne $qualityJson.summary -and [int]$qualityJson.summary.fail -gt 0) {
+            $script:QualityFail = 1
+        }
+        $script:QualityBlocking = @($qualityJson.blocking_reasons)
+    } catch {
+        $script:QualityFail = 1
+        $script:QualityReportAllowed = $false
+        $script:QualityBlocking = @("data_quality.json parse failed: " + $_.Exception.Message)
+    }
+}
+
 Write-Host ""
 Write-Host "===== FETCH SUMMARY ====="
 Write-Host ("Output: {0}" -f $OutDir)
@@ -148,9 +205,18 @@ $otherText = if ($script:Failures.Count) { ($script:Failures | Select-Object -Un
 Write-Host ("Fallbacks used: {0}" -f $fallbackText)
 Write-Host ("Empty critical: {0}" -f $criticalText)
 Write-Host ("Other empty: {0}" -f $otherText)
+Write-Host ("Data quality: {0}" -f $script:QualityLine)
+Write-Host ("Quality gate: report_allowed={0}; blocking={1}" -f $script:QualityReportAllowed, (($script:QualityBlocking | Select-Object -Unique) -join "; "))
 
+$gateMessages = @()
 if ($emptyCritical.Count -gt 0) {
-    $msg = "关键数据缺失: " + ($emptyCritical -join ", ") + "。请勿在缺少这些数据的情况下生成报告。"
-    if ($Strict) { throw $msg } else { Write-Warning $msg }
+    $gateMessages += "关键数据缺失: " + ($emptyCritical -join ", ")
+}
+if ($script:QualityFail -gt 0 -or -not $script:QualityReportAllowed) {
+    $gateMessages += "数据一致性校验门禁失败: " + (($script:QualityBlocking | Select-Object -Unique) -join "; ")
+}
+if ($gateMessages.Count -gt 0) {
+    $msg = ($gateMessages -join " | ") + "。请勿在门禁失败时生成报告。"
+    if ($script:StrictMode) { throw $msg } else { Write-Warning $msg }
 }
 Write-Host "Data fetched to: $OutDir"
