@@ -138,6 +138,8 @@ Invoke-QueryWithFallback "hithink-market-query" "cli.py" @("--query", "半导体
 # ---------- 新闻 / 公告 / 研报 ----------
 Invoke-Search "news-search" "news_search.py" "今日A股市场重要财经新闻 政策 行业" 15 "news_domestic.json"
 Invoke-Search "news-search" "news_search.py" "美股 美联储 全球市场 原油 黄金 比特币 最新" 15 "news_global.json"
+Invoke-Search "news-search" "news_search.py" "中国人民银行 国家统计局 证监会 财政部 发改委 最新 政策 公告" 15 "news_official_cn.json"
+Invoke-Search "news-search" "news_search.py" "美联储 美国财政部 美国劳工统计局 欧洲央行 日本央行 最新 政策 数据" 15 "news_official_global.json"
 Invoke-Search "announcement-search" "announcement_search.py" "今日重要公告 回购 增持 重组 业绩预告" 15 "announcements.json"
 Invoke-Search "announcement-search" "announcement_search.py" "今日股东增持公告" 10 "announcements_hold.json"
 Invoke-Search "announcement-search" "announcement_search.py" "今日业绩预告 半年报" 10 "announcements_forecast.json"

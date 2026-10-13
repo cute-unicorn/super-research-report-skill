@@ -67,6 +67,7 @@ def daily_basic_fixture() -> str:
             "风险提示二。",
             "风险提示三。",
             "数据来源：同花顺问财。",
+            "官方来源：中国人民银行 https://www.pbc.gov.cn。",
             "本报告不构成投资建议。",
         ]
     )
@@ -114,6 +115,7 @@ def stock_fixture() -> str:
 触发条件：财报、订单或现金流变化时复核。
 
 数据来源：同花顺问财。
+官方来源：上海证券交易所公告 https://www.sse.com.cn。
 本报告不构成投资建议。
 """
 
@@ -156,6 +158,7 @@ def daily_deep_fixture() -> str:
             "复盘：收盘后核对。",
             "触发条件：若破位则降低仓位。",
             "数据来源：同花顺问财。",
+            "官方来源：中国人民银行 https://www.pbc.gov.cn；国家统计局 https://www.stats.gov.cn。",
             "本报告不构成投资建议。",
         ]
     )
@@ -196,6 +199,19 @@ def main():
         report = vr.validate_report(stock_path, "stock")
         payload = vr.make_payload(report)
         check("个股研报通过", payload["report_valid"] is True, str(payload["blocking_reasons"]))
+        no_official_path = os.path.join(root, "stock_no_official.md")
+        write(
+            no_official_path,
+            stock_fixture().replace(
+                "官方来源：上海证券交易所公告 https://www.sse.com.cn。\n",
+                "",
+            ),
+        )
+        report = vr.validate_report(no_official_path, "stock")
+        check(
+            "缺少官方来源 -> report_valid=false",
+            vr.make_payload(report)["report_valid"] is False,
+        )
 
         print("\n[4] 占位符告警")
         placeholder_path = os.path.join(root, "placeholder.md")

@@ -119,6 +119,7 @@ Invoke-QueryWithRetry "hithink-insresearch-query" "cli.py" @("--query", "$stocks
 
 # 新闻 / 公告 / 研报
 Invoke-Search "news-search" "news_search.py" "$stocks 最新 业绩 公告 事件" 12 "stocks_news.json"
+Invoke-Search "news-search" "news_search.py" "$stocks 交易所 公告 年报 季报 监管 问询" 10 "stocks_official_news.json"
 Invoke-Search "announcement-search" "announcement_search.py" "$stocks 最新公告 业绩 回购 增持" 10 "stocks_announcements.json"
 Invoke-Search "report-search" "report_search.py" "$stocks 深度报告 点评 评级 目标价" 10 "stocks_reports.json"
 

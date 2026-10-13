@@ -67,6 +67,7 @@ PROFILES = {
         },
         "terms": ("数据来源", "不构成投资建议"),
         "headings_only": True,
+        "authoritative_min": 1,
     },
     "daily-deep": {
         "sections": [
@@ -96,6 +97,7 @@ PROFILES = {
         "terms": ("数据来源", "不构成投资建议"),
         "cross_ref": True,
         "headings_only": True,
+        "authoritative_min": 2,
     },
     "stock": {
         "sections": [
@@ -138,6 +140,7 @@ PROFILES = {
             "不构成投资建议",
         ),
         "headings_only": True,
+        "authoritative_min": 1,
     },
 }
 
@@ -155,6 +158,36 @@ SOURCE_NAMES = (
     "新闻",
     "研报",
     "交易所",
+)
+OFFICIAL_DOMAINS = (
+    "pbc.gov.cn",
+    "stats.gov.cn",
+    "csrc.gov.cn",
+    "mof.gov.cn",
+    "ndrc.gov.cn",
+    "miit.gov.cn",
+    "safe.gov.cn",
+    "sse.com.cn",
+    "szse.cn",
+    "bse.cn",
+    "cninfo.com.cn",
+    "chinamoney.com.cn",
+    "federalreserve.gov",
+    "home.treasury.gov",
+    "bls.gov",
+    "bea.gov",
+    "sec.gov",
+    "ecb.europa.eu",
+    "bankofengland.co.uk",
+    "boj.or.jp",
+    "imf.org",
+    "worldbank.org",
+    "oecd.org",
+    "bis.org",
+    "eia.gov",
+    "opec.org",
+    "noaa.gov",
+    "lme.com",
 )
 
 
@@ -337,6 +370,29 @@ def _check_source_coverage(report: Report, text: str) -> None:
     )
 
 
+def _check_authoritative_sources(
+    report: Report,
+    text: str,
+    minimum: int,
+) -> None:
+    lowered = text.lower()
+    found = sorted({domain for domain in OFFICIAL_DOMAINS if domain in lowered})
+    level = "PASS" if len(found) >= minimum else "CRITICAL"
+    report.add(
+        "report.authoritative_sources",
+        "权威原始来源覆盖",
+        level,
+        expected=f"至少 {minimum} 个官方来源域名",
+        actual=", ".join(found) if found else "未识别到官方来源域名",
+        detail=(
+            ""
+            if level == "PASS"
+            else "政策、宏观、监管、公告或海外数据必须优先引用原始发布方；"
+            "不得只引用新闻标题或搜索摘要。"
+        ),
+    )
+
+
 def _check_cross_reference(report: Report, text: str) -> None:
     """检查板块推荐里的股票代码是否出现在个股深度分析中。"""
     board_pos = text.find("板块推荐")
@@ -402,6 +458,11 @@ def validate_report(path: str, profile: str) -> Report:
     _check_terms(report, text, config["terms"])
     _check_placeholders(report, text)
     _check_source_coverage(report, text)
+    _check_authoritative_sources(
+        report,
+        text,
+        int(config.get("authoritative_min", 1)),
+    )
     if config.get("cross_ref"):
         _check_cross_reference(report, text)
     return report

@@ -23,6 +23,7 @@
 - 数据质量门禁：日频数据与个股多期数据都有独立校验；存在 CRITICAL 时拒绝生成结论，WARN 必须在报告中解释。
 - 报告结构验收：日报和个股研报生成后自动检查固定章节、政策逐条解读、非共识、风险提示、关键财务字段与免责声明。
 - 宏观数据补全：CPI、PPI、M2、社融、LPR、汇率独立抓取；黄金、原油、铜拆分查询后合并。
+- 权威来源优先级：政策、宏观、监管、交易所和海外利率必须优先引用官方原始来源，新闻仅用于发现线索。
 - 风控纪律：每只个股与板块都给出止损、止盈与风险提示；目标价与止损均为示例参数。
 - 可接入定时自动化：配合 Codex 定时任务，每日自动产出并保存研报。
 - 可选网页可视化：将研报渲染为玻璃拟态风格的自包含 HTML 页面（零依赖，双击打开）。
@@ -36,6 +37,7 @@
 │   ├── SKILL.md                     # 技能主入口与工作流
 │   ├── agents/openai.yaml           # 技能界面配置
 │   ├── references/report_spec.md    # 基础版 + 深度版研报规范
+│   ├── references/authoritative_sources.md # 官方来源清单与引用规则
 │   └── scripts/
 │       ├── fetch_daily_data.ps1     # 同花顺问财数据抓取（含重试/兜底/校验）
 │       ├── fetch_miaoxiang_data.ps1 # 东方财富妙想数据抓取
@@ -48,6 +50,7 @@
 └── stock-deep-research/             # 个股机构级深度研报技能
     ├── SKILL.md
     ├── references/report_spec.md
+    ├── references/authoritative_sources.md
     └── scripts/
         ├── fetch_stock_data.ps1
         ├── lib/build_timeseries.py       # 单季度/累计财务时间序列
