@@ -8,6 +8,7 @@
 """
 
 import datetime
+import json
 import os
 import re
 
@@ -106,6 +107,7 @@ def ext_brd(text):
 _SEC_MARK = re.compile(r"(行业与风格|领涨行业|领跌行业|涨幅榜|跌幅榜|涨居前)")
 _BULLET_PCT = re.compile(r"^[-*]\s+(.+?)\s*([+\-]?\d+\.?\d*)\s*%")
 _NUM_PCT = re.compile(r"^\s*\d+[.、]\s+(.+?)\s*([+\-]?\d+\.?\d*)\s*%")
+_ANY_PCT = re.compile(r"([+\-]?\d+\.?\d*)\s*%")
 
 
 def _is_sec_marker(line):
@@ -115,12 +117,37 @@ def _is_sec_marker(line):
     要么是 Markdown 标题，要么是短标签行。
     """
     s = line.strip()
+    if "非共识" in s or "观点" in s:
+        return False
     if not _SEC_MARK.search(s):
         return False
     if s.startswith("#"):
         return True
     plain = s.strip("*：: ").strip()
     return len(plain) <= 14
+
+
+def _table_sector(line):
+    """从 Markdown 表格行提取 (行业名, 涨跌幅)。"""
+    s = line.strip()
+    if not s.startswith("|"):
+        return None
+    cells = [c.strip().strip("*` ") for c in s.strip("|").split("|")]
+    if len(cells) < 2:
+        return None
+    for index, cell in enumerate(cells):
+        match = _ANY_PCT.search(cell)
+        if not match:
+            continue
+        name = cells[index - 1] if index > 0 else cells[0]
+        name = name.strip()
+        if not name or name in {"行业", "板块", "名称", "涨跌幅", "指标"}:
+            continue
+        try:
+            return name[:14], float(match.group(1))
+        except ValueError:
+            return None
+    return None
 
 
 def ext_sec(text, limit=24):
@@ -138,11 +165,13 @@ def ext_sec(text, limit=24):
             continue
         j = i + 1
         while j < len(lines):
-            s = lines[j]
-            if not s.strip():
+            s = lines[j].strip()
+            if not s:
                 j += 1
                 continue
-            m = _BULLET_PCT.match(s) or _NUM_PCT.match(s)
+            if s.startswith("#"):
+                break
+            m = _BULLET_PCT.match(lines[j]) or _NUM_PCT.match(lines[j])
             if m:
                 try:
                     name = m.group(1).strip().split("：")[0].split(":")[0][:14]
@@ -151,11 +180,65 @@ def ext_sec(text, limit=24):
                     pass
                 j += 1
                 continue
-            break
-        i = j + 1 if j == i + 1 else j
+            table_item = _table_sector(lines[j])
+            if table_item:
+                ret.append({"n": table_item[0], "v": table_item[1]})
+                j += 1
+                continue
+            j += 1
+        i = j
 
     seen, out = set(), []
     for item in ret:
+        if item["n"] not in seen:
+            seen.add(item["n"])
+            out.append(item)
+    return out[:limit]
+
+
+def _suffixed_value(row, prefix):
+    """读取精确字段或带日期后缀的最新字段。"""
+    if prefix in row:
+        return row.get(prefix)
+    values = []
+    for key, value in row.items():
+        if key == prefix or key.startswith(prefix + "["):
+            values.append((key, value))
+    if not values:
+        return None
+    values.sort(key=lambda item: item[0])
+    return values[-1][1]
+
+
+def ext_sec_from_data(data_dir, limit=24):
+    """从 industry_top/bottom.json 补全行业热力图数据。"""
+    if not data_dir or not os.path.isdir(data_dir):
+        return []
+    rows = []
+    for filename in ("industry_top.json", "industry_bottom.json"):
+        path = os.path.join(data_dir, filename)
+        if not os.path.exists(path):
+            continue
+        try:
+            with open(path, "r", encoding="utf-8-sig") as handle:
+                payload = json.load(handle)
+        except Exception:
+            continue
+        for row in payload.get("datas", []):
+            if not isinstance(row, dict):
+                continue
+            name = row.get("指数简称") or row.get("行业名称") or row.get("板块名称")
+            value = _suffixed_value(row, "涨跌幅")
+            if value is None:
+                value = _suffixed_value(row, "跌幅")
+                if value is not None:
+                    value = -abs(pnum(value))
+            number = pnum(value)
+            if name and number is not None:
+                rows.append({"n": str(name)[:14], "v": number})
+
+    seen, out = set(), []
+    for item in rows:
         if item["n"] not in seen:
             seen.add(item["n"])
             out.append(item)
@@ -315,8 +398,47 @@ _FLOW_PATS = [
 
 
 def ext_fundflow(text):
+    lines = _lines(text)
+    section_lines = None
+    for i, line in enumerate(lines):
+        s = line.strip()
+        if s.startswith("#") and ("资金分析" in s or "资金结构" in s):
+            section_lines = []
+            for j in range(i + 1, len(lines)):
+                if lines[j].strip().startswith("## "):
+                    break
+                section_lines.append(lines[j])
+            break
+    pool = section_lines if section_lines is not None else lines
+
     r = {}
-    for line in _lines(text):
+    # 优先解析资金结构表，避免正文中的板块资金流入被误当成市场主力资金。
+    for line in pool:
+        s = line.strip()
+        if not s.startswith("|"):
+            continue
+        cells = [c.strip().strip("*` ") for c in s.strip("|").split("|")]
+        if len(cells) < 2:
+            continue
+        label, amount = cells[0], cells[1]
+        if not amount or amount in {"—", "-", "--"}:
+            continue
+        value = pnum(amount)
+        if value is None:
+            continue
+        key = None
+        if "主力" in label:
+            key = "main"
+        elif "机构" in label or "超大单" in label:
+            key = "xl"
+        elif "大户" in label or "大单" in label:
+            key = "large"
+        elif "散户" in label or "中单+小单" in label:
+            key = "retail"
+        if key and key not in r:
+            r[key] = value
+
+    for line in pool:
         for pat, key, sign in _FLOW_PATS:
             if key in r:
                 continue
@@ -399,16 +521,22 @@ def ext_toc(text):
 
 
 # ---------------- 诊断 ----------------
-def is_stock_report(text):
+def is_stock_report(text, path=None):
+    """优先按文件名分类，避免深度日报中的“核心判断”导致误判。"""
+    name = os.path.basename(path or "")
+    if "每日市场研报" in name or "深度分析与标的策略" in name:
+        return False
+    if "深度研报" in name:
+        return True
     head = text[:1200]
     return "客观评级" in head or "核心判断" in head
 
 
-def extract_for(text, path):
+def extract_for(text, path, data_dir=None):
     """按报告类型抽取，返回 (kind, data)。"""
-    if is_stock_report(text):
+    if is_stock_report(text, path):
         return "stock", ext_stock(text)
-    return "daily", {
+    data = {
         "idx": ext_idx(text),
         "brd": ext_brd(text),
         "sec": ext_sec(text),
@@ -418,6 +546,9 @@ def extract_for(text, path):
         "trend": ext_margin_trend(text),
         "flow": ext_fundflow(text),
     }
+    if not data["sec"]:
+        data["sec"] = ext_sec_from_data(data_dir)
+    return "daily", data
 
 
 def diagnose(kind, data):

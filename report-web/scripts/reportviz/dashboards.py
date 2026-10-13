@@ -8,11 +8,11 @@ from .charts import (
     _key_points, _breadth_chart, _margin_composition, _sector_bars,
 )
 
-def build_dashboard(text):
+def build_dashboard(text, path=None, data_dir=None):
     """生成仪表盘 HTML 块（如果数据可用）"""
-    if "客观评级" in text[:500] or "核心判断" in text[:800]:
+    if ex.is_stock_report(text, path):
         return build_stock_dash(text)
-    return build_daily_dash(text)
+    return build_daily_dash(text, data_dir)
 
 
 def build_stock_dash(text):
@@ -35,10 +35,12 @@ def build_stock_dash(text):
     return '<div class="dashboard">' + "".join(parts) + "</div>" if parts else ""
 
 
-def build_daily_dash(text):
+def build_daily_dash(text, data_dir=None):
     idx = ex.ext_idx(text)
     brd = ex.ext_brd(text)
     sec = ex.ext_sec(text)
+    if not sec:
+        sec = ex.ext_sec_from_data(data_dir)
     mgn = ex.ext_mgn(text)
     macro = ex.ext_macro(text)
     ovs = ex.ext_overseas(text)

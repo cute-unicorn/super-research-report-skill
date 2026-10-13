@@ -188,7 +188,7 @@ def _heatmap(sectors):
             f'<span class="hm-n">{esc(s["n"])}</span>'
             f'<span class="hm-v" style="color:{tc}">{v:+.2f}%</span></div>'
         )
-    return f'<div class="hm-wrap"><div class="hm-title">板块热力图</div><div class="hm-grid">{"".join(tiles)}</div></div>'
+    return f'<div class="hm-wrap"><div class="hm-grid">{"".join(tiles)}</div></div>'
 
 
 def _key_points(idx, brd, sec, mgn, flow):

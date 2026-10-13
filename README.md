@@ -62,7 +62,7 @@
     ├── scripts/
     │   ├── render_report.py         # CLI 入口
     │   └── reportviz/               # 提取/渲染/图表/模板模块
-    └── tests/                       # 26 项断言 + 样例研报
+    └── tests/                       # 33 项断言 + 样例研报
 ```
 
 ## 自测
@@ -237,9 +237,11 @@ python "stock-deep-research\scripts\lib\validate_report.py" "深度研报_公司
 
 ```bash
 python report-web/scripts/render_report.py --input "每日市场研报_2026-08-25.md" --output "daily_report.html" --diagnose
+# 可选：显式指定数据目录；不传时会自动寻找 data/YYYY-MM-DD
+python report-web/scripts/render_report.py --input "报告.md" --output "报告.html" --data-dir "data/2026-08-25"
 ```
 
-输出单文件 HTML，双击即可在浏览器中离线打开。内置玻璃拟态暗色主题、市场仪表盘（指数卡片、涨跌环形图、行业条形图）、数字动画与阅读进度条。
+输出单文件 HTML，双击即可在浏览器中离线打开。内置玻璃拟态暗色主题、市场仪表盘（指数卡片、涨跌环形图、行业热力图/条形图）、数字动画与阅读进度条。行业表格和深度日报会自动使用同级 `data/YYYY-MM-DD` 的行业数据补全可视化。
 
 加 `--diagnose` 可打印提取诊断（报告类型 + 未取到的字段），便于排查图表缺失原因。
 

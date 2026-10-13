@@ -35,10 +35,12 @@ description: 将 Markdown 研报渲染为炫酷的玻璃拟态网页（自包含
 ```bash
 python "<模块目录>/report-web/scripts/render_report.py" \
     --input "<报告.md>" --output "<报告.html>" \
-    [--title "自定义标题"] [--diagnose]
+    [--title "自定义标题"] [--data-dir "<报告对应data目录>"] [--diagnose]
 ```
 
 `--diagnose` 会打印报告类型与缺失字段清单，用于排查图表为何不显示。
+若未显式传入 `--data-dir`，渲染器会按文件名日期自动寻找同级 `data/YYYY-MM-DD`。
+深度日报会优先按文件名识别为日报，避免其中的“核心判断”被误判为个股报告。
 
 ## 结构
 
@@ -57,7 +59,7 @@ report-web/
 │       └── assets.py         # 内联 CSS/JS
 └── tests/
     ├── fixtures/             # 样例研报
-    └── test_extract.py       # 26 项断言
+    └── test_extract.py       # 33 项断言
 ```
 
 ## 自测
@@ -66,8 +68,9 @@ report-web/
 python report-web/tests/test_extract.py
 ```
 
-覆盖：数值解析、每日报告提取（指数/宽度/行业/两融/资金/宏观/海外）、
-个股报告提取（评级/估值/财务/筹码/技术）、诊断、渲染组件、自包含性。
+覆盖：数值解析、每日报告提取（指数/宽度/表格行业/两融/资金/宏观/海外）、
+深度日报分类、data 目录行业回退、个股报告提取（评级/估值/财务/筹码/技术）、
+诊断、渲染组件、自包含性和 CSS/JS 分离。
 
 ## 依赖
 

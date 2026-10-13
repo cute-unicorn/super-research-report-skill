@@ -10,6 +10,7 @@
 
 import argparse
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -18,27 +19,46 @@ from reportviz import extract as ex          # noqa: E402
 from reportviz.template import build_html    # noqa: E402
 
 
+def resolve_data_dir(input_path, explicit=None):
+    if explicit:
+        return explicit if os.path.isdir(explicit) else None
+    match = re.search(r"(\d{4}-\d{2}-\d{2})", os.path.basename(input_path))
+    if not match:
+        return None
+    date = match.group(1)
+    report_dir = os.path.dirname(os.path.abspath(input_path))
+    candidates = [
+        os.path.join(report_dir, "data", date),
+        os.path.join(os.path.dirname(report_dir), "data", date),
+    ]
+    return next((path for path in candidates if os.path.isdir(path)), None)
+
+
 def main():
     ap = argparse.ArgumentParser(description="Markdown 研报 → 自包含 HTML")
     ap.add_argument("--input", "-i", required=True, help="输入 Markdown 路径")
     ap.add_argument("--output", "-o", required=True, help="输出 HTML 路径")
     ap.add_argument("--title", default=None, help="自定义标题")
+    ap.add_argument("--data-dir", default=None, help="该报告对应的 data/YYYY-MM-DD 目录")
     ap.add_argument("--diagnose", action="store_true",
                     help="打印提取诊断（哪些字段没取到）")
     args = ap.parse_args()
 
     with open(args.input, encoding="utf-8") as f:
         text = f.read()
+    data_dir = resolve_data_dir(args.input, args.data_dir)
 
-    page = build_html(text, args.input, title=args.title)
+    page = build_html(text, args.input, title=args.title, data_dir=data_dir)
     with open(args.output, "w", encoding="utf-8") as f:
         f.write(page)
     print(f"written: {args.output} ({len(page)} chars)")
 
     if args.diagnose:
-        kind, data = ex.extract_for(text, args.input)
+        kind, data = ex.extract_for(text, args.input, data_dir)
         missing = ex.diagnose(kind, data)
         print(f"report kind: {kind}")
+        if data_dir:
+            print(f"data dir: {data_dir}")
         if missing:
             print(f"missing fields ({len(missing)}): " + ", ".join(missing))
         else:

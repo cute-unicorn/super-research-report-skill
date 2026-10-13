@@ -22,7 +22,7 @@ def _toc_html(toc):
     return '<ul class="toc">' + "".join(items) + "</ul>"
 
 
-def build_html(text, path, title=None):
+def build_html(text, path, title=None, data_dir=None):
     title = title or ex.ext_title(text, path)
     date = ex.ext_date(path)
     badges = ex.ext_badges(text, path)
@@ -35,7 +35,7 @@ def build_html(text, path, title=None):
             lines = lines[1:]
     body = render_blocks(lines, ctx)
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-    dash = build_dashboard(text)
+    dash = build_dashboard(text, path, data_dir)
     tag_html = "".join(
         f'<span class="tag{" hi" if i == 0 else ""}">{esc(b)}</span>'
         for i, b in enumerate(badges)

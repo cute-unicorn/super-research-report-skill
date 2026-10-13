@@ -267,6 +267,8 @@ hr{border:none;height:1px;background:linear-gradient(90deg,transparent,var(--lin
 .mc-chip{border-left:3px solid var(--acc,#6366f1)}
 .hm-tile{transition:transform .18s ease,box-shadow .18s ease}
 .hm-tile:hover{transform:translateY(-2px);box-shadow:0 6px 18px rgba(0,0,0,.35)}
+.dash-sec{margin:32px 0}
+.dash-sec-t{font-size:12px;color:var(--accent2);letter-spacing:3px;text-transform:uppercase;margin-bottom:10px;padding-left:12px;border-left:3px solid var(--accent)}
 
 """
 
@@ -299,8 +301,5 @@ JS = r"""
   if(topBtn)topBtn.addEventListener("click",()=>window.scrollTo({top:0,behavior:"smooth"}));
   onScroll();
 })();
-
-.dash-sec{margin:32px 0}
-.dash-sec-t{font-size:12px;color:var(--accent2);letter-spacing:3px;text-transform:uppercase;margin-bottom:10px;padding-left:12px;border-left:3px solid var(--accent)}
 
 """

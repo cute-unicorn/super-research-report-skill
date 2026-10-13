@@ -9,7 +9,9 @@
 """
 
 import os
+import json
 import sys
+import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -17,6 +19,7 @@ SCRIPTS = os.path.join(os.path.dirname(HERE), "scripts")
 sys.path.insert(0, SCRIPTS)
 
 from reportviz import extract as ex          # noqa: E402
+from reportviz.assets import CSS, JS         # noqa: E402
 from reportviz.template import build_html    # noqa: E402
 from reportviz.textutil import pnum, fmt     # noqa: E402
 
@@ -89,6 +92,37 @@ class TestDailyExtract(unittest.TestCase):
         self.assertEqual(len(names), 5, f"行业数量异常: {names}")
         self.assertNotIn("农业化肥链", names)
 
+    def test_sector_markdown_tables(self):
+        text = (
+            "## 领涨行业\n\n"
+            "| 行业 | 涨跌幅 |\n|---|---|\n"
+            "| 疫苗 | +4.82% |\n"
+            "| 半导体 | -2.92% |\n"
+        )
+        sectors = {item["n"]: item["v"] for item in ex.ext_sec(text)}
+        self.assertEqual(sectors["疫苗"], 4.82)
+        self.assertEqual(sectors["半导体"], -2.92)
+
+    def test_deep_daily_is_not_stock(self):
+        text = "# 深度分析与标的策略\n\n## 核心判断\n市场判断。\n"
+        kind, _ = ex.extract_for(
+            text,
+            "每日市场研报_2026-10-07_深度分析与标的策略.md",
+        )
+        self.assertEqual(kind, "daily")
+
+    def test_sector_data_dir_fallback(self):
+        with tempfile.TemporaryDirectory() as root:
+            payload = {"datas": [
+                {"指数简称": "印制电路板", "涨跌幅[20261013]": 6.389},
+                {"指数简称": "元件", "涨跌幅[20261013]": 5.0135},
+            ]}
+            with open(os.path.join(root, "industry_top.json"), "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False)
+            sectors = {item["n"]: item["v"] for item in ex.ext_sec_from_data(root)}
+            self.assertEqual(sectors["印制电路板"], 6.389)
+            self.assertEqual(sectors["元件"], 5.0135)
+
     def test_margin(self):
         m = ex.ext_mgn(self.text)
         self.assertAlmostEqual(m["bal"], 12766.58e8, places=-6)
@@ -107,6 +141,22 @@ class TestDailyExtract(unittest.TestCase):
         f = ex.ext_fundflow(self.text)
         self.assertAlmostEqual(f["main"], -315.96e8, places=-6)
         self.assertAlmostEqual(f["xl"], -131.68e8, places=-6)
+
+    def test_fundflow_section_scoped(self):
+        text = (
+            "# 每日市场研报\n\n"
+            "## 行业资金流入\n"
+            "银行主力净流入24.25亿元。\n\n"
+            "## 十二、资金分析\n"
+            "| 资金类别 | 净买入额 | 口径 |\n|---|---|---|\n"
+            "| 机构资金（超大单） | -31.47亿元 | 超大单 |\n"
+            "| 主力资金（超大单+大单） | -56.50亿元 | 主力 |\n"
+            "| 散户资金（中单+小单） | +84.33亿元 | 中单+小单 |\n"
+        )
+        f = ex.ext_fundflow(text)
+        self.assertAlmostEqual(f["main"], -56.50e8, places=-6)
+        self.assertAlmostEqual(f["xl"], -31.47e8, places=-6)
+        self.assertAlmostEqual(f["retail"], 84.33e8, places=-6)
 
     def test_macro(self):
         m = ex.ext_macro(self.text)
@@ -188,6 +238,7 @@ class TestRender(unittest.TestCase):
         html = self._render("daily_sample.md")
         for token in ("idx-card", "hm-tile", "mgn-card", "dash-sec-t", "<svg"):
             self.assertIn(token, html, f"缺少组件: {token}")
+        self.assertEqual(html.count("板块热力图"), 1, "板块热力图标题不应重复")
 
     def test_stock_components(self):
         html = self._render("stock_sample.md")
@@ -213,6 +264,20 @@ class TestRender(unittest.TestCase):
             html = self._render(fixture)
             self.assertNotIn("<script src=", html)
             self.assertNotIn('rel="stylesheet"', html)
+
+    def test_css_not_embedded_in_script(self):
+        self.assertNotIn(".dash-sec{", JS, "CSS 不应混入 JavaScript 字符串")
+        self.assertIn(".dash-sec{", CSS, "dash-sec 样式应存在于 CSS")
+
+    def test_deep_daily_uses_data_dir_for_heatmap(self):
+        text = "# 每日深度分析与标的策略\n\n## 核心判断\n市场判断。\n"
+        path = "每日市场研报_2026-10-13_深度分析与标的策略.md"
+        with tempfile.TemporaryDirectory() as root:
+            payload = {"datas": [{"指数简称": "印制电路板", "涨跌幅[20261013]": 6.389}]}
+            with open(os.path.join(root, "industry_top.json"), "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False)
+            html = build_html(text, path, data_dir=root)
+            self.assertIn("hm-tile", html)
 
 
 if __name__ == "__main__":
